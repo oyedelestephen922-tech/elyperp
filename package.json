@@ -44,5 +44,8 @@
     "@reown/appkit@1.8.19": true,
     "esbuild@0.28.2": true,
     "fsevents@2.3.3": true
+  },
+  "engines": {
+    "node": "22.x"
   }
 }

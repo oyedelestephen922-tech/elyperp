@@ -91,7 +91,7 @@ export function WalletButton() {
                 }}
                 className="flex items-center gap-3 rounded-md border border-line-2 bg-raised px-3 py-2.5 text-sm hover:border-accent/50"
               >
-                {c.icon ? <img /* eslint-disable-line @next/next/no-img-element */ src={c.icon} alt="" className="h-5 w-5 rounded" /> : <span className="h-5 w-5 rounded bg-line-2" />}
+                {c.icon ? <img /* eslint-disable-line @next/next/no-img-element */ src={c.icon} alt="" className="h-5 w-5 rounded" /> : c.id === "walletConnect" ? <WalletConnectIcon /> : <span className="h-5 w-5 rounded bg-line-2" />}
                 <span className="flex-1 text-left">{c.name === "Injected" ? "Browser wallet" : c.name}</span>
                 {isPending && variables?.connector === c && <Spinner />}
               </button>
@@ -151,4 +151,16 @@ export function WalletButton() {
 function MenuItem({ children, onClick, href, danger }: { children: React.ReactNode; onClick?: () => void; href?: string; danger?: boolean }) {
   const cls = clsx("block w-full text-left rounded px-2 py-1.5 hover:bg-raised", danger ? "text-short" : "text-fg");
   return href ? <a href={href} target="_blank" rel="noreferrer" className={cls}>{children} ↗</a> : <button onClick={onClick} className={cls}>{children}</button>;
+}
+
+function WalletConnectIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+      <rect width="24" height="24" rx="5" fill="#3b99fc" />
+      <path
+        d="M7.3 9.6a6.7 6.7 0 0 1 9.4 0l.3.3c.1.1.1.3 0 .4l-1 1c-.1.1-.2.1-.2 0l-.4-.4a4.7 4.7 0 0 0-6.6 0l-.4.4c-.1.1-.2.1-.2 0l-1-1c-.1-.1-.1-.3 0-.4zm11.4 2 .9.9c.1.1.1.3 0 .4l-4.1 4c-.1.1-.3.1-.4 0l-2.9-2.8h-.1l-2.9 2.8c-.1.1-.3.1-.4 0l-4.1-4c-.1-.1-.1-.3 0-.4l.9-.9c.1-.1.3-.1.4 0l2.9 2.8h.1l2.9-2.8c.1-.1.3-.1.4 0l2.9 2.8h.1l2.9-2.8c.1-.1.3-.1.4 0z"
+        fill="#fff"
+      />
+    </svg>
+  );
 }
