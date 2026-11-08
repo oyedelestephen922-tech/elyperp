@@ -81,7 +81,7 @@ export default function MarketsPage() {
         <CatBtn on={cat === "fav"} onClick={() => setCat("fav")} label="★ Watchlist" n={favorites.length} />
         {EXTRA.filter((c) => counts[c]).map((c) => <CatBtn key={c} on={cat === c} onClick={() => setCat(c)} label={CATEGORY_LABEL[c]} n={counts[c]} subtle />)}
         <div className="flex-1" />
-        <select value={dex} onChange={(e) => setDex(e.target.value)} className="bg-panel border border-line-2 rounded px-2 py-1.5 text-xs text-muted">
+        <select value={dex} onChange={(e) => setDex(e.target.value)} className="w-44 bg-panel border border-line-2 rounded px-2 py-1.5 text-xs text-muted">
           <option value="all">All dexes</option>
           {dexOptions.map((d) => <option key={d.name || "hl"} value={d.name}>{d.fullName}{d.name ? ` (${d.name})` : ""}</option>)}
         </select>

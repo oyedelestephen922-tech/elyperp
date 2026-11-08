@@ -1,6 +1,6 @@
 "use client";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import type { DexInfo, Market, MarketCtx } from "@/lib/hl/markets";
 import { statusOf } from "@/lib/hl/markets";
 
@@ -90,6 +90,14 @@ export const usePrefs = create<PrefsState>()(
       setSlippage: (slippage) => set({ slippage }),
       setLayout: (layout) => set({ layout }),
     }),
-    { name: "elyperp:prefs" },
+    {
+      name: "elyperp:prefs",
+      // only touch localStorage in the browser (avoids a Node warning during server render)
+      storage: createJSONStorage(() =>
+        typeof window === "undefined"
+          ? { getItem: () => null, setItem: () => {}, removeItem: () => {} }
+          : window.localStorage,
+      ),
+    },
   ),
 );
