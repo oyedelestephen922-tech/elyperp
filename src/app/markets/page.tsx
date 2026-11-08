@@ -91,13 +91,6 @@ export default function MarketsPage() {
         </select>
       </div>
 
-      {(cat === "stock" || cat === "index") && (
-        <p className="text-[11px] text-muted panel px-3 py-2">
-          {cat === "stock" ? "Stock" : "Index"} perpetuals are HIP-3 contracts deployed by independent builders. Each is shown with its dex namespace
-          (e.g. <span className="num">dex:TICKER</span>) because different dexes can list the same ticker with different oracles, collateral and rules.
-          Pricing outside US market hours follows each deployer&apos;s methodology.
-        </p>
-      )}
 
       <div className="panel overflow-x-auto scroll-thin">
         {!loaded ? (
