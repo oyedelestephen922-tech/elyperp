@@ -3,17 +3,23 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { Market, MarketCtx, SessionInfo } from "@/lib/orderly/markets";
 
-export interface LiveTicker {
+/** Row from Orderly's useMarketsStream: /v1/public/futures merged with the live `tickers` topic. */
+export interface LiveMarketRow {
   symbol: string;
-  open: number;
-  close: number;
-  high: number;
-  low: number;
-  volume: number;
-  amount: number;
-  open_interest?: number;
+  mark_price?: number;
   index_price?: number;
+  open_interest?: number | string;
+  est_funding_rate?: number;
+  last_funding_rate?: number;
+  next_funding_time?: number;
+  "24h_open"?: number;
+  "24h_high"?: number;
+  "24h_low"?: number;
+  "24h_volume"?: number;
+  "24h_amount"?: number;
 }
+
+const num = (v: unknown) => (v == null || v === "" ? NaN : Number(v));
 
 interface MarketsState {
   markets: Record<string, Market>; // by symbol
@@ -25,7 +31,7 @@ interface MarketsState {
   liveAt: number; // last live stream update
   setUniverse: (markets: Market[], sessions: Record<string, SessionInfo>, fetchedAt: number) => void;
   setError: (e: string | null) => void;
-  applyTickers: (tickers: LiveTicker[]) => void;
+  applyTickers: (rows: LiveMarketRow[]) => void;
   applyMarkPrices: (prices: Record<string, number>) => void;
 }
 
@@ -57,23 +63,31 @@ export const useMarkets = create<MarketsState>((set) => ({
       return { markets, slugs, sessions, loaded: true, error: null, fetchedAt };
     }),
   setError: (error) => set({ error }),
-  applyTickers: (tickers) =>
+  applyTickers: (rows) =>
     set((s) => {
-      if (!tickers.length) return s;
+      if (!rows.length) return s;
       const markets = { ...s.markets };
-      for (const t of tickers) {
-        const m = markets[t.symbol];
+      for (const r of rows) {
+        const m = markets[r.symbol];
         if (!m) continue;
         const ctx = { ...(m.ctx ?? emptyCtx()) };
-        ctx.open24 = Number(t.open);
-        ctx.high24 = Number(t.high);
-        ctx.low24 = Number(t.low);
-        ctx.volume24 = Number(t.volume);
-        ctx.amount24 = Number(t.amount);
-        if (t.open_interest != null) ctx.openInterest = Number(t.open_interest);
-        if (t.index_price != null) ctx.indexPx = Number(t.index_price);
-        if (!(ctx.markPx > 0)) ctx.markPx = Number(t.close);
-        markets[t.symbol] = { ...m, ctx };
+        // only overwrite fields the stream actually carries
+        const put = (k: keyof MarketCtx, v: unknown) => {
+          const n = num(v);
+          if (Number.isFinite(n)) ctx[k] = n;
+        };
+        put("open24", r["24h_open"]);
+        put("high24", r["24h_high"]);
+        put("low24", r["24h_low"]);
+        put("volume24", r["24h_volume"]);
+        put("amount24", r["24h_amount"]);
+        put("openInterest", r.open_interest);
+        put("indexPx", r.index_price);
+        put("estFunding", r.est_funding_rate);
+        put("lastFunding", r.last_funding_rate);
+        put("nextFundingTime", r.next_funding_time);
+        if (!(ctx.markPx > 0)) put("markPx", r.mark_price);
+        markets[r.symbol] = { ...m, ctx };
       }
       return { markets, liveAt: Date.now() };
     }),

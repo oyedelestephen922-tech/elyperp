@@ -2,7 +2,7 @@
 import { useEffect } from "react";
 import { useMarkPricesStream, useMarketsStream } from "@orderly.network/hooks";
 import type { MarketUniverse } from "@/lib/orderly/markets";
-import { useMarkets, type LiveTicker } from "@/store/markets";
+import { useMarkets, type LiveMarketRow } from "@/store/markets";
 import { logError } from "@/lib/errors";
 
 const CACHE_KEY = "elyperp:universe:orderly";
@@ -58,7 +58,7 @@ export function MarketSync() {
   }, [setUniverse, setError]);
 
   useEffect(() => {
-    if (tickers?.length) applyTickers(tickers as unknown as LiveTicker[]);
+    if (tickers?.length) applyTickers(tickers as unknown as LiveMarketRow[]);
   }, [tickers, applyTickers]);
 
   useEffect(() => {

@@ -119,3 +119,24 @@ describe("formatting", () => {
     expect(fmtPct(-0.00001)).toBe("0.00%");
   });
 });
+
+describe("live market rows", () => {
+  it("maps Orderly's useMarketsStream rows (REST field names) onto the market", async () => {
+    const { useMarkets } = await import("../src/store/markets");
+    const u = buildUniverse([info("PERP_XAU_USDC", { display_symbol_name: "XAU (Gold)" })], [], [], 1);
+    useMarkets.getState().setUniverse(u.markets, u.sessions, u.fetchedAt);
+    // shape copied from the live stream: futures row merged with the tickers topic
+    useMarkets.getState().applyTickers([{
+      symbol: "PERP_XAU_USDC", mark_price: 4054.75, index_price: 4052.7, open_interest: 20.2432, est_funding_rate: 0.00011596,
+      next_funding_time: 1794398400000, "24h_open": 4081.68, "24h_high": 4081.9, "24h_low": 4019.97, "24h_volume": 86.3688, "24h_amount": 350074.91,
+    }]);
+    const ctx = useMarkets.getState().markets["PERP_XAU_USDC"].ctx!;
+    expect(ctx.open24).toBe(4081.68);
+    expect(ctx.amount24).toBe(350074.91);
+    expect(ctx.markPx).toBe(4054.75);
+    expect(change24(ctx)).toBeCloseTo(4054.75 / 4081.68 - 1);
+    // a row without a field leaves the existing value alone
+    useMarkets.getState().applyTickers([{ symbol: "PERP_XAU_USDC", "24h_amount": 1 }]);
+    expect(useMarkets.getState().markets["PERP_XAU_USDC"].ctx!.open24).toBe(4081.68);
+  });
+});
