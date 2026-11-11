@@ -6,7 +6,7 @@ import { Providers } from "@/components/providers/Providers";
 import { TopNav } from "@/components/nav/TopNav";
 
 export const metadata: Metadata = {
-  title: "Elyperp | Perps on Elysium",
+  title: "Elyperp | Perps on Robinhood Chain",
   description: "Trade crypto, stock and index perpetuals on Hyperliquid infrastructure.",
 };
 

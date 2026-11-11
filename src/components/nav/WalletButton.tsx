@@ -3,7 +3,7 @@ import clsx from "clsx";
 import { useEffect, useRef, useState } from "react";
 import { useBalance, useChainId, useConnect, useConnection, useConnectors, useDisconnect, useSwitchChain } from "wagmi";
 import { Button, Modal, Spinner } from "@/components/ui/primitives";
-import { elysium, HL_APP_URL } from "@/lib/config";
+import { robinhood, HL_APP_URL } from "@/lib/config";
 import { fmtUsd, shortAddr } from "@/lib/format";
 import { useAccountStore, selectSummary } from "@/store/account";
 import { useTrading } from "@/components/providers/TradingProvider";
@@ -15,19 +15,19 @@ export function NetworkBadge() {
   const { isConnected } = useConnection();
   const chainId = useChainId();
   const { mutate: switchChain, isPending } = useSwitchChain();
-  const onElysium = chainId === elysium.id;
+  const onRobinhood = chainId === robinhood.id;
   if (!isConnected) return null;
   return (
     <button
-      onClick={() => !onElysium && switchChain({ chainId: elysium.id })}
-      title={onElysium ? `Connected to ${elysium.name} (chain ${elysium.id})` : "Switch to Elysium"}
+      onClick={() => !onRobinhood && switchChain({ chainId: robinhood.id })}
+      title={onRobinhood ? `Connected to ${robinhood.name} (chain ${robinhood.id})` : `Switch to ${robinhood.name}`}
       className={clsx(
         "hidden sm:flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs",
-        onElysium ? "border-line-2 text-fg" : "border-warn/40 text-warn bg-warn/5 hover:bg-warn/10",
+        onRobinhood ? "border-line-2 text-fg" : "border-warn/40 text-warn bg-warn/5 hover:bg-warn/10",
       )}
     >
-      <span className={clsx("h-1.5 w-1.5 rounded-full", onElysium ? "bg-accent" : "bg-warn")} />
-      {isPending ? "Switching…" : onElysium ? elysium.name : "Wrong network"}
+      <span className={clsx("h-1.5 w-1.5 rounded-full", onRobinhood ? "bg-accent" : "bg-warn")} />
+      {isPending ? "Switching…" : onRobinhood ? robinhood.name : "Wrong network"}
     </button>
   );
 }
@@ -44,7 +44,7 @@ export function WalletButton() {
   const states = useAccountStore((s) => s.states);
   const loaded = useAccountStore((s) => s.loaded);
   const { status, revoke } = useTrading();
-  const { data: hype } = useBalance({ address, chainId: elysium.id, query: { enabled: !!address } });
+  const { data: gasBal } = useBalance({ address, chainId: robinhood.id, query: { enabled: !!address } });
   const menuRef = useRef<HTMLDivElement>(null);
   const equity = selectSummary(states).equity;
 
@@ -83,7 +83,7 @@ export function WalletButton() {
                 onClick={async () => {
                   setConnectError(null);
                   try {
-                    await connect({ connector: c, chainId: elysium.id });
+                    await connect({ connector: c, chainId: robinhood.id });
                     setPickerOpen(false);
                   } catch (e) {
                     setConnectError(humanizeError(e));
@@ -130,13 +130,13 @@ export function WalletButton() {
             <div className="px-2 py-1.5 text-muted">
               <div className="num text-fg break-all">{address}</div>
               <div className="mt-1">via {connector?.name}</div>
-              {hype && <div className="mt-1 num">{Number(formatUnits(hype.value, hype.decimals)).toFixed(4)} HYPE on {elysium.name}</div>}
+              {gasBal && <div className="mt-1 num">{Number(formatUnits(gasBal.value, gasBal.decimals)).toFixed(4)} {robinhood.nativeCurrency.symbol} on {robinhood.name}</div>}
               <div className="mt-1">Trading key: <span className={status === "ready" ? "text-accent" : "text-warn"}>{status === "ready" ? "approved" : status}</span></div>
             </div>
             <div className="border-t border-line my-1" />
             <MenuItem onClick={() => { setOnboardOpen(true); setMenuOpen(false); }}>Deposit & account setup</MenuItem>
             <MenuItem onClick={() => navigator.clipboard?.writeText(address ?? "")}>Copy address</MenuItem>
-            <MenuItem href={`${elysium.blockExplorers?.default.url}/address/${address}`}>View on Elysium explorer</MenuItem>
+            <MenuItem href={`${robinhood.blockExplorers?.default.url}/address/${address}`}>View on Robinhood Chain explorer</MenuItem>
             <MenuItem href={`${HL_APP_URL}/explorer/address/${address}`}>View on Hyperliquid explorer</MenuItem>
             {status === "ready" && <MenuItem onClick={() => { revoke(); setMenuOpen(false); }}>Forget trading key on this device</MenuItem>}
             <MenuItem onClick={() => { disconnect(); setMenuOpen(false); }} danger>Disconnect</MenuItem>

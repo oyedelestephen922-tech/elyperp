@@ -5,7 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useChainId, useConnection, useSwitchChain, useWalletClient } from "wagmi";
 import { Button, Modal, Spinner } from "@/components/ui/primitives";
 import { useTrading } from "@/components/providers/TradingProvider";
-import { elysium, IS_TESTNET, LINKS } from "@/lib/config";
+import { robinhood, IS_TESTNET, LINKS } from "@/lib/config";
 import { fmtUsd } from "@/lib/format";
 import { getHttpTransport, getInfo } from "@/lib/hl/clients";
 import { humanizeError, logError } from "@/lib/hl/errors";
@@ -27,7 +27,7 @@ export function OnboardingModal({ open, onClose }: { open: boolean; onClose: () 
 
   const equity = selectSummary(states).equity;
   const spotUsdc = Number(spot?.balances.find((b) => b.coin === "USDC")?.total ?? 0);
-  const onElysium = chainId === elysium.id;
+  const onRobinhood = chainId === robinhood.id;
   const funded = equity > 0 || spotUsdc > 0;
 
   useEffect(() => {
@@ -76,16 +76,16 @@ export function OnboardingModal({ open, onClose }: { open: boolean; onClose: () 
           <span className="num text-muted break-all">{address}</span>
         </Step>
 
-        <Step n={2} done={onElysium} title={`Elysium network (chain ${elysium.id})`}>
-          {onElysium ? (
-            <p className="text-muted">Connected to {elysium.name}. Your same address is used as your Hyperliquid account.</p>
+        <Step n={2} done={onRobinhood} title={`${robinhood.name} (chain ${robinhood.id})`}>
+          {onRobinhood ? (
+            <p className="text-muted">Connected to {robinhood.name}. Your same address is used as your Hyperliquid account.</p>
           ) : (
             <div className="flex flex-col gap-2">
-              <p className="text-warn">Your wallet is on chain {chainId}. Switch to Elysium to use the ecosystem network.</p>
-              <Button onClick={() => switchChain({ chainId: elysium.id })} disabled={switching} className="self-start">
-                {switching ? "Switching…" : `Switch to ${elysium.name}`}
+              <p className="text-warn">Your wallet is on chain {chainId}. Switch to {robinhood.name} to use the ecosystem network.</p>
+              <Button onClick={() => switchChain({ chainId: robinhood.id })} disabled={switching} className="self-start">
+                {switching ? "Switching…" : `Switch to ${robinhood.name}`}
               </Button>
-              <p className="text-faint">Trading signatures work on any chain. The network only matters for Elysium balances and bridging.</p>
+              <p className="text-faint">Trading signatures work on any chain. The network only matters for Robinhood Chain balances and bridging.</p>
             </div>
           )}
         </Step>
@@ -108,9 +108,9 @@ export function OnboardingModal({ open, onClose }: { open: boolean; onClose: () 
             <Route title="HyperEVM USDC → HyperCore (Circle CoreDepositWallet)" href={LINKS.circleHyperEvmToCore}>
               Approve USDC, then call <code>deposit(amount, 0)</code> to credit your perps balance.
             </Route>
-            <Route title="From Elysium" href={LINKS.elysiumDocs}>
-              Elysium settles to HyperEVM. Bridge to HyperEVM with Elysium&apos;s canonical bridge, then use the route above.
-              A direct Elysium → HyperCore trading lane is planned by Kinetiq after mainnet; Elyperp will add it once verified contracts are published.
+            <Route title="From Robinhood Chain" href={LINKS.robinhoodBridging}>
+              Bridge USDC from Robinhood Chain to Arbitrum with one of the routes Robinhood lists (Across, Relay, LI.FI/Jumper),
+              then deposit it to Hyperliquid with the Arbitrum route above.
             </Route>
             {IS_TESTNET && (
               <Route title="Testnet faucet" href={LINKS.testnetFaucet}>

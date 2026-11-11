@@ -1,4 +1,4 @@
-import { elysium, HL_NETWORK, LINKS } from "@/lib/config";
+import { robinhood, HL_NETWORK, LINKS } from "@/lib/config";
 
 export const metadata = { title: "Docs | Elyperp" };
 
@@ -22,23 +22,23 @@ export default function DocsPage() {
       <div className="flex flex-col gap-8">
         <div>
           <h1 className="text-2xl font-semibold">Documentation</h1>
-          <p className="text-sm text-muted mt-1">Running on Hyperliquid <b className="text-fg">{HL_NETWORK}</b> · Elysium chain ID {elysium.id}</p>
+          <p className="text-sm text-muted mt-1">Running on Hyperliquid <b className="text-fg">{HL_NETWORK}</b> · {robinhood.name} chain ID {robinhood.id}</p>
         </div>
 
         <S id="architecture" title="How Elyperp works">
           <p><b className="text-fg">Execution</b> happens on Hyperliquid&apos;s HyperCore order books. Elyperp never holds your funds. Orders are signed in your browser and sent straight to Hyperliquid.</p>
-          <p><b className="text-fg">Elysium</b> is Kinetiq&apos;s Arbitrum Orbit chain that settles to HyperEVM and uses HYPE for gas. Elyperp connects EVM wallets on Elysium, and your same EVM address is your Hyperliquid account.</p>
+          <p><b className="text-fg">Robinhood Chain</b> is Robinhood&apos;s Arbitrum Orbit Layer 2 on Ethereum and uses ETH for gas. Elyperp connects EVM wallets on Robinhood Chain, and your same EVM address is your Hyperliquid account.</p>
           <p><b className="text-fg">Market data</b> (all markets, prices, order books, trades, candles, funding and open interest) streams live from Hyperliquid. Market discovery runs through Elyperp&apos;s backend with short caching. Prices are flagged stale whenever the live feed stops.</p>
         </S>
 
         <S id="onboarding" title="Getting started">
           <ol className="list-decimal pl-5 flex flex-col gap-1.5">
-            <li>Connect MetaMask, Rabby or another EVM wallet (WalletConnect when configured). Switch to Elysium when prompted.</li>
+            <li>Connect MetaMask, Rabby or another EVM wallet (WalletConnect when configured). Switch to Robinhood Chain when prompted.</li>
             <li>Fund your Hyperliquid account with USDC. Connecting a wallet does not create an account by itself. Supported routes:
               <ul className="list-disc pl-5 mt-1">
                 <li><a className="text-accent" href={LINKS.hyperliquidDeposit} target="_blank" rel="noreferrer">Arbitrum USDC → Hyperliquid bridge</a> (minimum 5 USDC).</li>
                 <li><a className="text-accent" href={LINKS.circleHyperEvmToCore} target="_blank" rel="noreferrer">HyperEVM USDC → HyperCore</a> through Circle&apos;s CoreDepositWallet.</li>
-                <li>From Elysium: bridge to HyperEVM with Elysium&apos;s canonical bridge, then use the HyperEVM route. A direct Elysium → HyperCore lane is planned by Kinetiq after mainnet. Elyperp will add it once audited contract addresses are published.</li>
+                <li>From Robinhood Chain: bridge USDC to Arbitrum with one of the <a className="text-accent" href={LINKS.robinhoodBridging} target="_blank" rel="noreferrer">routes Robinhood lists</a> (Across, Relay, LI.FI/Jumper), then use the Arbitrum route above.</li>
               </ul>
             </li>
             <li>Click <b className="text-fg">Enable trading</b> and sign once. This approves a browser-generated trading key that can place and cancel orders but cannot withdraw.</li>
@@ -78,7 +78,7 @@ export default function DocsPage() {
 
         <S id="limits" title="Known limitations">
           <ul className="list-disc pl-5 flex flex-col gap-1">
-            <li>There is no in-app Elysium → Hyperliquid bridge yet; see Getting started for the supported routes.</li>
+            <li>There is no in-app Robinhood Chain → Hyperliquid bridge yet; see Getting started for the supported routes.</li>
             <li>Charts use TradingView Lightweight Charts. Drawing tools are limited to horizontal price lines; the full Advanced Charts library needs a TradingView license.</li>
             <li>HIP-3 dexes that use a non-USDC collateral token need that token in your account.</li>
           </ul>

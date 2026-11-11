@@ -20,23 +20,33 @@ export const HL_APP_URL = IS_TESTNET
   ? "https://app.hyperliquid-testnet.xyz"
   : "https://app.hyperliquid.xyz";
 
-// Kinetiq's Elysium (testnet 99801). viem's built-in elysiumTestnet is a different chain (1338).
-const elysiumId = Number(process.env.NEXT_PUBLIC_ELYSIUM_CHAIN_ID || 99801);
-const elysiumRpc =
-  process.env.NEXT_PUBLIC_ELYSIUM_RPC_URL || "https://testnet-rpc.elysium.kinetiq.xyz";
-const elysiumExplorer =
-  process.env.NEXT_PUBLIC_ELYSIUM_EXPLORER_URL ||
-  "https://explorer-elysium-testnet.t.conduit.xyz";
+// Robinhood Chain: Arbitrum Orbit L2 on Ethereum, gas in ETH.
+// Mainnet 4663, testnet 46630. Follows the Hyperliquid network unless overridden.
+const RH_MAINNET = {
+  id: 4663,
+  name: "Robinhood Chain",
+  rpc: "https://rpc.mainnet.chain.robinhood.com",
+  explorer: "https://robinhoodchain.blockscout.com",
+};
+const RH_TESTNET = {
+  id: 46630,
+  name: "Robinhood Chain Testnet",
+  rpc: "https://rpc.testnet.chain.robinhood.com",
+  explorer: "https://explorer.testnet.chain.robinhood.com",
+};
 
-export const elysium: Chain = defineChain({
-  id: elysiumId,
-  name: process.env.NEXT_PUBLIC_ELYSIUM_CHAIN_NAME || (elysiumId === 99801 ? "Elysium Testnet" : "Elysium"),
-  testnet: elysiumId === 99801,
-  nativeCurrency: { name: "HYPE", symbol: "HYPE", decimals: 18 },
-  rpcUrls: { default: { http: [elysiumRpc] } },
-  blockExplorers: { default: { name: "Elysium Explorer", url: elysiumExplorer } },
-  contracts: {
-    multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11" },
+const rhDefault = IS_TESTNET ? RH_TESTNET : RH_MAINNET;
+const rhId = Number(process.env.NEXT_PUBLIC_ROBINHOOD_CHAIN_ID || rhDefault.id);
+const rhBase = rhId === RH_MAINNET.id ? RH_MAINNET : rhId === RH_TESTNET.id ? RH_TESTNET : rhDefault;
+
+export const robinhood: Chain = defineChain({
+  id: rhId,
+  name: process.env.NEXT_PUBLIC_ROBINHOOD_CHAIN_NAME || rhBase.name,
+  testnet: rhId === RH_TESTNET.id,
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: [process.env.NEXT_PUBLIC_ROBINHOOD_RPC_URL || rhBase.rpc] } },
+  blockExplorers: {
+    default: { name: "Blockscout", url: process.env.NEXT_PUBLIC_ROBINHOOD_EXPLORER_URL || rhBase.explorer },
   },
 });
 
@@ -50,6 +60,7 @@ export const LINKS = {
   hyperliquidDeposit: `${HL_APP_URL}/portfolio`,
   hyperliquidDocsBridge: "https://hyperliquid.gitbook.io/hyperliquid-docs/onboarding/how-to-start-trading",
   testnetFaucet: "https://app.hyperliquid-testnet.xyz/drip",
-  elysiumDocs: "https://elysium.kinetiq.xyz/docs",
+  robinhoodDocs: "https://docs.robinhood.com/chain/",
+  robinhoodBridging: "https://docs.robinhood.com/chain/bridging/",
   circleHyperEvmToCore: "https://developers.circle.com/cctp/transfer-usdc-from-hyperevm-to-hypercore",
 };

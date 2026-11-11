@@ -1,6 +1,6 @@
 # Elyperp
 
-Perps exchange frontend for the Elysium ecosystem. Orders execute on Hyperliquid (HyperCore): crypto perps plus stock, index, commodity and FX perps from HIP-3 builder dexes.
+Perps exchange frontend for the Robinhood Chain ecosystem. Orders execute on Hyperliquid (HyperCore): crypto perps plus stock, index, commodity and FX perps from HIP-3 builder dexes.
 
 Non-custodial. No backend secrets. Orders are signed in the browser and sent straight to Hyperliquid.
 
@@ -31,14 +31,14 @@ npm run build && npm start
 | Var | Default | |
 |---|---|---|
 | `NEXT_PUBLIC_HL_NETWORK` | `testnet` | `testnet` or `mainnet` |
-| `NEXT_PUBLIC_ELYSIUM_CHAIN_ID` | `99801` | Elysium testnet |
-| `NEXT_PUBLIC_ELYSIUM_CHAIN_NAME` | `Elysium Testnet` | |
-| `NEXT_PUBLIC_ELYSIUM_RPC_URL` | Kinetiq testnet RPC | |
-| `NEXT_PUBLIC_ELYSIUM_EXPLORER_URL` | Conduit testnet explorer | |
+| `NEXT_PUBLIC_ROBINHOOD_CHAIN_ID` | follows HL network | `4663` mainnet, `46630` testnet |
+| `NEXT_PUBLIC_ROBINHOOD_CHAIN_NAME` | `Robinhood Chain` / `Robinhood Chain Testnet` | |
+| `NEXT_PUBLIC_ROBINHOOD_RPC_URL` | public Robinhood RPC | rate-limited; use a provider key for heavy traffic |
+| `NEXT_PUBLIC_ROBINHOOD_EXPLORER_URL` | Blockscout | |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | empty | WalletConnect is off unless set |
 | `TESTNET_PRIVATE_KEY` | | only for `scripts/testnet-trade.ts` |
 
-Note: Elysium here is Kinetiq's L2 on HyperEVM (gas in HYPE). Don't use `elysiumTestnet` from `viem/chains`. That's an older, unrelated chain (id 1338).
+Robinhood Chain is Robinhood's Arbitrum Orbit L2 on Ethereum (gas in ETH). With `NEXT_PUBLIC_HL_NETWORK=mainnet` the app uses Robinhood Chain mainnet (4663); on testnet it uses Robinhood Chain Testnet (46630).
 
 ## How it works
 
@@ -51,9 +51,9 @@ Note: Elysium here is Kinetiq's L2 on HyperEVM (gas in HYPE). Don't use `elysium
 
 API routes: `/api/markets` (discovery; serves the last result instantly and refreshes in the background), `/api/candles`, `/api/health`.
 
-## Wallet / Elysium
+## Wallet / Robinhood Chain
 
-Add Elysium testnet to MetaMask or Rabby (chain 99801, HYPE, `https://testnet-rpc.elysium.kinetiq.xyz`). The app also offers to switch or add it. Your EVM address is your Hyperliquid account.
+Add Robinhood Chain to MetaMask or Rabby (chain 4663, ETH, `https://rpc.mainnet.chain.robinhood.com`, explorer `https://robinhoodchain.blockscout.com`). Testnet is chain 46630 with `https://rpc.testnet.chain.robinhood.com`. The app also offers to switch or add it. Your EVM address is your Hyperliquid account.
 
 ## Funding the account
 
@@ -61,9 +61,9 @@ Connecting a wallet doesn't move any money. Ways to get USDC onto HyperCore:
 
 - Arbitrum USDC through the Hyperliquid bridge (min 5 USDC)
 - HyperEVM USDC through Circle's `CoreDepositWallet.deposit(amount, 0)`
-- Elysium → HyperEVM through the canonical bridge, then the route above
+- Robinhood Chain → Arbitrum with a route Robinhood lists (Across, Relay, LI.FI/Jumper; see https://docs.robinhood.com/chain/bridging/), then the Arbitrum route above
 
-Kinetiq's direct Elysium → HyperCore lane is planned for roughly a month after Elysium mainnet. There are no published contracts yet, so it isn't wired in. Add it in `OnboardingModal.tsx` once it's out.
+There's no direct Robinhood Chain → HyperCore deposit, so it isn't wired in. If one is published, add it in `OnboardingModal.tsx`.
 
 The setup dialog also handles moving spot USDC to perps, approving the trading key, and turning on HIP-3 dex abstraction.
 
