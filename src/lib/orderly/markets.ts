@@ -20,7 +20,8 @@ export interface MarketCtx {
 export interface Market {
   symbol: string; // PERP_BTC_USDC, PERP_AAPL_USDC_mythos
   slug: string; // URL id: BTC, AAPL-mythos
-  base: string; // display name: BTC, AAPL
+  base: string; // ticker: BTC, AAPL, XAU
+  name: string | null; // description Orderly gives some markets, e.g. "Gold" for XAU
   builder: string | null; // builder that listed it; null = listed by Orderly
   category: MarketCategory;
   session: string | null; // RWA trading session (US_STOCK, US_FUTURES, FX…)
@@ -93,11 +94,11 @@ export interface RawRwa {
 }
 
 const INDEX_SYMBOLS = new Set([
-  "SPX500", "SPX", "SP500", "US500", "NAS100", "NDX", "US100", "US30", "DJI", "RUT", "US2000",
-  "JP225", "DAX", "GER40", "UK100", "HK50", "EU50", "KOSPI", "VIX", "QQQ", "SPY", "IWM", "DIA", "SOXL", "TQQQ", "EWY", "EWJ", "KORU",
+  "SPX500", "SP500", "US500", "NAS100", "NDX", "US100", "US30", "DJI", "RUT", "US2000",
+  "JP225", "DAX", "GER40", "UK100", "HK50", "EU50", "KOSPI", "VIX", "QQQ", "SPY", "IWM", "DIA", "SOXL", "SOXS", "TQQQ", "SQQQ", "EWY", "EWJ", "KORU",
 ]);
 const COMMODITY_SYMBOLS = new Set([
-  "XAU", "GOLD", "XAG", "SILVER", "CL", "WTI", "BZ", "BRENT", "NATGAS", "NG", "COPPER", "HG", "PLATINUM", "PALLADIUM", "XPT", "XPD",
+  "XAU", "GOLD", "XAG", "SILVER", "CL", "WTI", "BZ", "BRENT", "NATGAS", "NG", "COPPER", "HG", "PLATINUM", "PALLADIUM", "XPT", "XPD", "DRAM",
 ]);
 const FX_SYMBOLS = new Set(["EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "HKDUSD", "KRWUSD", "DXY"]);
 
@@ -106,18 +107,22 @@ export function decimalsOf(step: number): number {
   return Math.min(12, Math.max(0, Math.round(-Math.log10(step))));
 }
 
-/** PERP_<BASE>_USDC[_<builder>] → { base, builder } */
+/** PERP_<BASE>_USDC[_<builder>] → { base, name, builder }. Display names can carry a description: "XAU (Gold)". */
 export function parseSymbol(symbol: string, displayName?: string | null, brokerId?: string | null) {
   const m = /^PERP_(.+?)_USDC(?:_(.+))?$/.exec(symbol);
-  const base = displayName || (m ? m[1] : symbol);
+  const fromSymbol = m ? m[1] : symbol;
+  const d = (displayName ?? "").trim();
+  const dm = /^([A-Za-z0-9.]+)\s*(?:\((.+)\))?$/.exec(d);
+  const base = dm ? dm[1] : fromSymbol;
+  const name = dm?.[2]?.trim() || null;
   const builder = brokerId ?? (m && m[2] ? m[2] : null);
-  return { base, builder: builder || null };
+  return { base, name, builder: builder || null };
 }
 
 export function categorize(base: string, session: string | null): MarketCategory {
   const b = base.toUpperCase();
   if (session === "FX" || FX_SYMBOLS.has(b)) return "fx";
-  if (session === "US_FUTURES") return INDEX_SYMBOLS.has(b) ? "index" : "commodity";
+  if (session === "US_FUTURES") return INDEX_SYMBOLS.has(b) ? "index" : COMMODITY_SYMBOLS.has(b) ? "commodity" : "other";
   if (session && /STOCK/.test(session)) return INDEX_SYMBOLS.has(b) ? "index" : "stock";
   if (INDEX_SYMBOLS.has(b)) return "index";
   if (COMMODITY_SYMBOLS.has(b)) return "commodity";
@@ -168,7 +173,7 @@ export function buildUniverse(info: RawInfo[], futures: RawFutures[], rwa: RawRw
     else if (list.length === 1) plainOwner.set(k, list[0].i.symbol);
   }
 
-  const markets: Market[] = parsed.map(({ i, base, builder }) => {
+  const markets: Market[] = parsed.map(({ i, base, name, builder }) => {
     const r = rw.get(i.symbol);
     const f = fut.get(i.symbol);
     const plain = plainOwner.get(base.toUpperCase()) === i.symbol;
@@ -176,6 +181,7 @@ export function buildUniverse(info: RawInfo[], futures: RawFutures[], rwa: RawRw
       symbol: i.symbol,
       slug: plain || !builder ? base : `${base}-${builder}`,
       base,
+      name,
       builder,
       category: categorize(base, r?.market_session ?? null),
       session: r?.market_session ?? null,

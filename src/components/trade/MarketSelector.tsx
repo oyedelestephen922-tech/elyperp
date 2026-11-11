@@ -29,7 +29,7 @@ export function MarketSelector({ current, onClose }: { current: Market; onClose:
   const rows = useMemo(() => {
     const ql = q.trim().toLowerCase();
     return listed
-      .filter((m) => (ql ? m.base.toLowerCase().includes(ql) || (m.builder ?? "").toLowerCase().includes(ql) : cat === "fav" ? favorites.includes(m.symbol) : m.category === cat))
+      .filter((m) => (ql ? m.base.toLowerCase().includes(ql) || (m.name ?? "").toLowerCase().includes(ql) || (m.builder ?? "").toLowerCase().includes(ql) : cat === "fav" ? favorites.includes(m.symbol) : m.category === cat))
       .sort((a, b) => (b.ctx?.amount24 ?? 0) - (a.ctx?.amount24 ?? 0))
       .slice(0, 200);
   }, [listed, q, cat, favorites]);
@@ -64,7 +64,8 @@ export function MarketSelector({ current, onClose }: { current: Market; onClose:
               className={clsx("grid grid-cols-[1.6rem_1fr_6rem_5rem_5.5rem] items-center px-2 py-1.5 rounded cursor-pointer text-xs hover:bg-raised", m.symbol === current.symbol && "bg-raised")}>
               <button onClick={(e) => { e.stopPropagation(); toggleFavorite(m.symbol); }} className={favorites.includes(m.symbol) ? "text-warn" : "text-faint hover:text-muted"} aria-label="Favorite">★</button>
               <span className="flex items-center gap-1.5 min-w-0">
-                <span className="font-medium truncate">{m.base}</span>
+                <span className="font-medium truncate" title={m.name ?? undefined}>{m.base}</span>
+                {m.name && <span className="text-faint truncate hidden sm:inline">{m.name}</span>}
                 {m.builder && <Badge>{m.builder}</Badge>}
                 <span className="text-faint">{m.maxLeverage}x</span>
                 {m.status !== "active" && <Badge tone="warn">{m.status.replace("_", " ")}</Badge>}

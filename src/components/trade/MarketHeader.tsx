@@ -43,6 +43,7 @@ export function MarketHeader({ market }: { market: Market }) {
         <div className="relative shrink-0" ref={ref}>
           <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-raised">
             <span className="text-base font-semibold">{market.base}-PERP</span>
+            {market.name && <span className="text-xs text-muted hidden sm:inline">{market.name}</span>}
             {market.builder && <Badge tone="accent">{market.builder}</Badge>}
             <span className="text-faint text-xs">▾</span>
           </button>

@@ -47,7 +47,7 @@ export default function MarketsPage() {
       .filter((m) => (cat === "fav" ? favorites.includes(m.symbol) : m.category === cat))
       .filter((m) => status === "all" || m.status === "active")
       .filter((m) => source === "all" || (source === "orderly" ? !m.builder : !!m.builder))
-      .filter((m) => !ql || m.base.toLowerCase().includes(ql) || (m.builder ?? "").toLowerCase().includes(ql))
+      .filter((m) => !ql || m.base.toLowerCase().includes(ql) || (m.name ?? "").toLowerCase().includes(ql) || (m.builder ?? "").toLowerCase().includes(ql))
       .sort((a, b) => (sort === "name" ? a.base.localeCompare(b.base) * (desc ? -1 : 1) : (val(b) - val(a)) * (desc ? 1 : -1)));
   }, [all, cat, favorites, status, source, q, sort, desc]);
 
@@ -117,7 +117,7 @@ export default function MarketsPage() {
                   <tr key={m.symbol} onClick={() => open && router.push(marketPath(m.slug))}
                     className={clsx("border-t border-line", open ? "cursor-pointer hover:bg-panel-2" : "opacity-50")}>
                     <td className="pl-3"><button onClick={(e) => { e.stopPropagation(); toggleFavorite(m.symbol); }} className={favorites.includes(m.symbol) ? "text-warn" : "text-faint hover:text-muted"} aria-label="Watchlist">★</button></td>
-                    <td className="px-3 py-2"><span className="font-medium">{m.base}</span><span className="text-faint">-PERP</span></td>
+                    <td className="px-3 py-2"><span className="font-medium">{m.base}</span><span className="text-faint">-PERP</span>{m.name && <span className="text-faint text-[10px] ml-1.5">{m.name}</span>}</td>
                     <td className="px-3 py-2 text-muted">{m.builder ?? "Orderly"}</td>
                     <td className="px-3 py-2 text-right num">{fmtPx(c?.markPx || null, m.pxDecimals)}</td>
                     <td className={clsx("px-3 py-2 text-right num", pnlClass(chg))}>{fmtPct(chg)}</td>

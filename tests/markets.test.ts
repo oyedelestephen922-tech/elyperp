@@ -14,10 +14,15 @@ const fut = (symbol: string, mark: number, open: number): RawFutures => ({
 
 describe("symbols", () => {
   it("parses Orderly and builder-listed symbols", () => {
-    expect(parseSymbol("PERP_BTC_USDC")).toEqual({ base: "BTC", builder: null });
-    expect(parseSymbol("PERP_AAPL_USDC_mythos", "AAPL", "mythos")).toEqual({ base: "AAPL", builder: "mythos" });
-    expect(parseSymbol("PERP_1000PEPE_USDC")).toEqual({ base: "1000PEPE", builder: null });
-    expect(parseSymbol("PERP_AAPL_USDC_mythos")).toEqual({ base: "AAPL", builder: "mythos" });
+    expect(parseSymbol("PERP_BTC_USDC")).toEqual({ base: "BTC", name: null, builder: null });
+    expect(parseSymbol("PERP_AAPL_USDC_mythos", "AAPL", "mythos")).toEqual({ base: "AAPL", name: null, builder: "mythos" });
+    expect(parseSymbol("PERP_1000PEPE_USDC")).toEqual({ base: "1000PEPE", name: null, builder: null });
+    expect(parseSymbol("PERP_AAPL_USDC_mythos")).toEqual({ base: "AAPL", name: null, builder: "mythos" });
+  });
+
+  it("splits descriptions out of display names (live: \"XAU (Gold)\", \"CL (WTI Crude Oil)\")", () => {
+    expect(parseSymbol("PERP_XAU_USDC", "XAU (Gold)")).toEqual({ base: "XAU", name: "Gold", builder: null });
+    expect(parseSymbol("PERP_CL_USDC", "CL (WTI Crude Oil)")).toEqual({ base: "CL", name: "WTI Crude Oil", builder: null });
   });
 
   it("derives decimals from ticks", () => {
@@ -44,10 +49,13 @@ describe("categories", () => {
     expect(categorize("SPY", "US_STOCK_EXT")).toBe("index");
     expect(categorize("SPX500", "US_FUTURES")).toBe("index");
     expect(categorize("XAU", "US_FUTURES")).toBe("commodity");
+    expect(categorize("SPCX", "US_FUTURES")).toBe("other");
     expect(categorize("EURUSD", "FX")).toBe("fx");
   });
   it("falls back to symbol rules, crypto by default", () => {
     expect(categorize("BTC", null)).toBe("crypto");
+    // PERP_SPX_USDC on Orderly is the SPX6900 token, not the S&P 500 (that's SPX500)
+    expect(categorize("SPX", null)).toBe("crypto");
     expect(categorize("NAS100", null)).toBe("index");
     expect(categorize("XAG", null)).toBe("commodity");
     expect(categorize("USDJPY", null)).toBe("fx");
