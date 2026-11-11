@@ -1,10 +1,6 @@
-export function fmtPx(v: number | null | undefined, szDecimals = 2) {
+export function fmtPx(v: number | null | undefined, pxDecimals = 2) {
   if (v == null || !Number.isFinite(v)) return "--";
-  const maxDec = Math.max(0, 6 - szDecimals);
-  // show up to 5 significant figures, capped by the market's decimal limit
-  const sig = v === 0 ? 0 : Math.max(0, 5 - Math.floor(Math.log10(Math.abs(v))) - 1);
-  const dec = Math.min(maxDec, sig);
-  return v.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  return v.toLocaleString("en-US", { minimumFractionDigits: pxDecimals, maximumFractionDigits: pxDecimals });
 }
 
 export function fmtUsd(v: number | null | undefined, dec = 2) {
@@ -44,3 +40,10 @@ export function fmtDateTime(ms: number) {
 
 export const pnlClass = (v: number | null | undefined) =>
   v == null || v === 0 ? "text-muted" : v > 0 ? "text-long" : "text-short";
+
+export const marketPath = (slug: string) => `/trade/${encodeURIComponent(slug)}`;
+
+/** 24h change from the rolling open; null when there is no open yet. */
+export function change24(ctx: { markPx: number; open24: number } | null | undefined) {
+  return ctx && ctx.open24 > 0 && ctx.markPx > 0 ? ctx.markPx / ctx.open24 - 1 : null;
+}

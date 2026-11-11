@@ -1,17 +1,23 @@
 import { NextResponse } from "next/server";
-import { getInfo } from "@/lib/hl/clients";
-import { HL_API_URL, HL_NETWORK, robinhood } from "@/lib/config";
+import { BROKER_ID, ORDERLY_API_URL, TRADING_ENABLED, robinhood } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const started = Date.now();
-  const out: Record<string, unknown> = { network: HL_NETWORK, api: HL_API_URL, robinhoodChainId: robinhood.id };
+  const out: Record<string, unknown> = {
+    exchange: "orderly",
+    api: ORDERLY_API_URL,
+    brokerId: BROKER_ID || null,
+    tradingEnabled: TRADING_ENABLED,
+    robinhoodChainId: robinhood.id,
+  };
   try {
-    const [dexes, status] = await Promise.all([getInfo().perpDexs(), getInfo().exchangeStatus().catch(() => null)]);
-    out.hyperliquid = { ok: true, perpDexCount: dexes.length, exchangeStatus: status, latencyMs: Date.now() - started };
+    const r = await fetch(`${ORDERLY_API_URL}/v1/public/system_info`, { cache: "no-store", signal: AbortSignal.timeout(5000) });
+    const j = (await r.json()) as { success: boolean; data?: { status: number; msg: string } };
+    out.orderly = { ok: j.success && j.data?.status === 0, status: j.data?.msg, latencyMs: Date.now() - started };
   } catch (e) {
-    out.hyperliquid = { ok: false, error: e instanceof Error ? e.message : String(e) };
+    out.orderly = { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
   try {
     const r = await fetch(robinhood.rpcUrls.default.http[0], {
@@ -25,6 +31,6 @@ export async function GET() {
   } catch (e) {
     out.robinhood = { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
-  const ok = (out.hyperliquid as { ok: boolean }).ok;
+  const ok = (out.orderly as { ok: boolean }).ok;
   return NextResponse.json(out, { status: ok ? 200 : 503 });
 }

@@ -1,78 +1,82 @@
-// Hits the live Hyperliquid API (read-only, no wallet).
-// usage: npx tsx scripts/live-check.ts [mainnet|testnet]
-import { HttpTransport, InfoClient, SubscriptionClient, WebSocketTransport } from "@nktkas/hyperliquid";
-import { discoverMarkets } from "../src/lib/hl/markets";
+/**
+ * Read-only checks against Orderly's live API and Robinhood Chain.
+ * Usage: npm run live-check
+ */
+import { buildUniverse, type RawFutures, type RawInfo, type RawRwa } from "../src/lib/orderly/markets";
 
+const API = "https://api.orderly.org";
+const WS = "wss://ws-evm.orderly.org/ws/stream/OqdphuyCtYWxwzhxyLLjOWNdFP7sQt8RPWzmb5xY";
+const RPC = "https://rpc.mainnet.chain.robinhood.com";
+const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
 
-const net = process.argv[2] === "testnet" ? "testnet" : "mainnet";
-const isTestnet = net === "testnet";
-const info = new InfoClient({ transport: new HttpTransport({ isTestnet, timeout: 20_000 }) });
+let failures = 0;
+const ok = (name: string, cond: boolean, detail = "") => {
+  console.log(`${cond ? "PASS" : "FAIL"}  ${name}${detail ? "  " + detail : ""}`);
+  if (!cond) failures++;
+};
 
-function ok(label: string, cond: boolean, detail = "") {
-  console.log(`${cond ? "PASS" : "FAIL"}  ${label}${detail ? "  — " + detail : ""}`);
-  if (!cond) process.exitCode = 1;
+async function rows<T>(path: string): Promise<T[]> {
+  const j = (await (await fetch(API + path)).json()) as { success: boolean; data: { rows: T[] } };
+  if (!j.success) throw new Error(path);
+  return j.data.rows;
 }
 
 async function main() {
-  console.log(`\n=== Hyperliquid ${net} ===`);
-  const t0 = Date.now();
-  const u = await discoverMarkets(info, { isTestnet });
-  ok("market discovery", u.markets.length > 0, `${u.markets.length} markets, ${u.dexes.length} dexes in ${Date.now() - t0}ms`);
-  if (u.errors.length) console.log("  discovery warnings:", u.errors);
-  const by = (c: string) => u.markets.filter((m) => m.category === c);
-  for (const c of ["crypto", "stock", "index", "commodity", "fx", "other"])
-    console.log(`  ${c.padEnd(9)} ${String(by(c).length).padStart(4)}  e.g. ${by(c).slice(0, 8).map((m) => m.coin).join(", ")}`);
-  console.log("  dexes:", u.dexes.map((d) => `${d.name || "(hl)"}[${d.collateral}, ${d.marketCount}]`).join(" "));
+  const [info, futures, rwa, chains, tokens] = await Promise.all([
+    rows<RawInfo>("/v1/public/info"),
+    rows<RawFutures>("/v1/public/futures"),
+    rows<RawRwa>("/v1/public/rwa/info"),
+    rows<{ chain_id: string; name: string; vault_address: string }>("/v1/public/chain_info"),
+    rows<{ token: string; chain_details: { chain_id: string; contract_address: string; decimals: number }[] }>("/v1/public/token"),
+  ]);
+  const u = buildUniverse(info, futures, rwa);
+  ok("market list", u.markets.length > 50, `${u.markets.length} markets`);
+  const slugs = new Set(u.markets.map((m) => m.slug.toLowerCase()));
+  ok("slugs are unique", slugs.size === u.markets.length);
+  const btc = u.markets.find((m) => m.slug === "BTC");
+  ok("BTC market with live mark", !!btc && (btc.ctx?.markPx ?? 0) > 0, btc ? `mark ${btc.ctx?.markPx}` : "");
+  const cats = u.markets.reduce<Record<string, number>>((a, m) => ((a[m.category] = (a[m.category] ?? 0) + 1), a), {});
+  ok("stocks and indices present", (cats.stock ?? 0) > 0 && (cats.index ?? 0) > 0, JSON.stringify(cats));
 
-  for (const sym of ["BTC", "ETH", "SOL", "HYPE"]) {
-    const m = u.markets.find((x) => x.coin === sym);
-    ok(`${sym} listed with live ctx`, !!m?.ctx && m.ctx.markPx > 0, m ? `mark ${m.ctx?.markPx} maxLev ${m.maxLeverage} szDec ${m.szDecimals} asset ${m.assetId}` : "missing");
-  }
-  const hip3 = u.markets.filter((m) => m.dex && m.status === "active").sort((a, b) => (b.ctx?.dayNtlVlm ?? 0) - (a.ctx?.dayNtlVlm ?? 0));
-  ok("HIP-3 markets discovered", hip3.length > 0, hip3.slice(0, 6).map((m) => `${m.coin}=${m.ctx?.markPx} (#${m.assetId}, ${m.marginMode})`).join(", "));
+  const rh = chains.find((c) => Number(c.chain_id) === 4663);
+  ok("Robinhood Chain supported by Orderly", !!rh, rh ? `vault ${rh.vault_address}` : "");
+  const usdg = tokens.find((t) => t.token === "USDG")?.chain_details.find((c) => Number(c.chain_id) === 4663);
+  ok("USDG deposit token on Robinhood Chain", usdg?.contract_address.toLowerCase() === USDG, usdg ? `${usdg.contract_address} (${usdg.decimals} dp)` : "");
 
-  // Asset-id sanity: re-query meta for one HIP-3 dex and confirm index alignment
-  if (hip3[0]) {
-    const meta = await info.meta({ dex: hip3[0].dex });
-    const idx = meta.universe.findIndex((x) => x.name === hip3[0].coin);
-    ok("HIP-3 asset id formula", hip3[0].assetId === 100000 + hip3[0].dexIndex * 10000 + idx, `${hip3[0].coin} → ${hip3[0].assetId}`);
-  }
+  const now = Math.floor(Date.now() / 1000);
+  const tv = (await (await fetch(`${API}/tv/history?symbol=PERP_BTC_USDC&resolution=15&from=${now - 86400}&to=${now}`)).json()) as { s: string; c?: number[] };
+  const last = tv.c?.at(-1) ?? 0;
+  ok("candles", tv.s === "ok" && (tv.c?.length ?? 0) > 50, `${tv.c?.length} bars`);
+  ok("candle close near mark", !!btc?.ctx && Math.abs(last / btc.ctx.markPx - 1) < 0.02, `close ${last} vs mark ${btc?.ctx?.markPx}`);
 
-  const btc = u.markets.find((m) => m.coin === "BTC")!;
-  const candles = await info.candleSnapshot({ coin: "BTC", interval: "15m", startTime: Date.now() - 6 * 3600_000 });
-  ok("BTC 15m candles", candles.length > 10, `${candles.length} candles, last close ${candles.at(-1)?.c}`);
-  const drift = Math.abs(Number(candles.at(-1)!.c) - btc.ctx!.markPx) / btc.ctx!.markPx;
-  ok("chart price matches market mark (<1%)", drift < 0.01, `${(drift * 100).toFixed(3)}%`);
-  if (hip3[0]) {
-    const hc = await info.candleSnapshot({ coin: hip3[0].coin, interval: "1h", startTime: Date.now() - 48 * 3600_000 });
-    ok(`HIP-3 candles (${hip3[0].coin})`, hc.length > 0, `${hc.length} candles`);
-  }
-  const book = await info.l2Book({ coin: "BTC" });
-  ok("BTC L2 book", !!book && book.levels[0].length > 0 && book.levels[1].length > 0, `best bid ${book?.levels[0][0]?.px} / ask ${book?.levels[1][0]?.px}`);
-  const cats = await info.perpCategories().catch(() => []);
-  console.log(`  perpCategories: ${cats.length} entries; sample ${JSON.stringify(cats.slice(0, 5))}; distinct ${JSON.stringify([...new Set(cats.map((c) => c[1]))])}`);
+  const sys = (await (await fetch(`${API}/v1/public/system_info`)).json()) as { data: { status: number; msg: string } };
+  ok("Orderly system status", sys.data.status === 0, sys.data.msg);
 
-  // WebSocket: all-dex asset contexts, l2Book and trades must stream within 15s
-  const ws = new WebSocketTransport({ isTestnet });
-  const subs = new SubscriptionClient({ transport: ws });
-  const got = { ctx: 0, book: 0, trades: 0, dexesInCtx: 0 };
-  const s1 = await subs.allDexsAssetCtxs((e) => { got.ctx++; got.dexesInCtx = e.ctxs.length; });
-  const s2 = await subs.l2Book({ coin: "BTC" }, () => got.book++);
-  const s3 = await subs.trades({ coin: "BTC" }, () => got.trades++);
-  await new Promise((r) => setTimeout(r, 15_000));
-  ok("WS allDexsAssetCtxs streaming", got.ctx > 0, `${got.ctx} updates covering ${got.dexesInCtx} dexes`);
-  ok("WS l2Book streaming", got.book > 0, `${got.book} updates`);
-  ok("WS trades streaming", got.trades > 0 || isTestnet, `${got.trades} updates`);
-  await Promise.all([s1.unsubscribe(), s2.unsubscribe(), s3.unsubscribe()]);
-  ws.close();
+  const rpc = (await (await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] }) })).json()) as { result: string };
+  ok("Robinhood Chain RPC", Number(rpc.result) === 4663, `chainId ${Number(rpc.result)}`);
 
-  // Exchange endpoint reachability: an unsigned/invalid request must be REJECTED, never "ok".
-  const res = await fetch(`https://api.hyperliquid${isTestnet ? "-testnet" : ""}.xyz/exchange`, {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action: { type: "cancel", cancels: [{ a: 0, o: 1 }] }, nonce: Date.now(), signature: { r: "0x" + "1".repeat(64), s: "0x" + "1".repeat(64), v: 27 } }),
+  // websocket: orderbook + trade stream for BTC
+  await new Promise<void>((resolve) => {
+    const ws = new WebSocket(WS);
+    const got = new Set<string>();
+    const done = () => { ws.close(); resolve(); };
+    const timer = setTimeout(() => { ok("websocket streams", false, `got ${[...got].join(", ") || "nothing"}`); done(); }, 15_000);
+    ws.onopen = () => {
+      for (const topic of ["PERP_BTC_USDC@orderbook", "PERP_BTC_USDC@kline_1m", "markprices"]) ws.send(JSON.stringify({ id: topic, event: "subscribe", topic }));
+    };
+    ws.onmessage = (m) => {
+      const j = JSON.parse(String(m.data));
+      if (j.event === "ping") return ws.send(JSON.stringify({ event: "pong" }));
+      if (j.topic) got.add(j.topic);
+      if (got.size === 3) { clearTimeout(timer); ok("websocket streams", true, [...got].join(", ")); done(); }
+    };
   });
-  const body = await res.text();
-  ok("exchange rejects bogus signature (no fake success)", !body.includes('"status":"ok"') || body.includes("error"), body.slice(0, 160));
+
+  console.log(failures ? `\n${failures} check(s) failed` : "\nAll checks passed");
+  process.exit(failures ? 1 : 0);
 }
 
-main().catch((e) => { console.error("FATAL", e); process.exit(1); });
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

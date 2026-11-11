@@ -7,7 +7,7 @@ import { TopNav } from "@/components/nav/TopNav";
 
 export const metadata: Metadata = {
   title: "Elyperp | Perps on Robinhood Chain",
-  description: "Trade crypto, stock and index perpetuals on Hyperliquid infrastructure.",
+  description: "Trade crypto, stock and index perpetuals on Robinhood Chain.",
 };
 
 export const viewport: Viewport = { themeColor: "#050706", width: "device-width", initialScale: 1 };

@@ -2,9 +2,8 @@
 import clsx from "clsx";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CATEGORY_LABEL, type MarketCategory } from "@/lib/hl/classify";
-import { coinToPath, type Market } from "@/lib/hl/markets";
-import { fmtCompact, fmtPct, fmtPx, pnlClass } from "@/lib/format";
+import { CATEGORY_LABEL, type Market, type MarketCategory } from "@/lib/orderly/markets";
+import { change24, fmtCompact, fmtPct, fmtPx, marketPath, pnlClass } from "@/lib/format";
 import { useMarkets, usePrefs } from "@/store/markets";
 import { Badge } from "@/components/ui/primitives";
 
@@ -19,25 +18,26 @@ export function MarketSelector({ current, onClose }: { current: Market; onClose:
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => inputRef.current?.focus(), []);
 
+  const listed = useMemo(() => Object.values(markets).filter((m) => m.status !== "inactive"), [markets]);
+
   const counts = useMemo(() => {
     const c: Record<string, number> = { fav: favorites.length };
-    Object.values(markets).forEach((m) => !m.isDelisted && (c[m.category] = (c[m.category] ?? 0) + 1));
+    listed.forEach((m) => (c[m.category] = (c[m.category] ?? 0) + 1));
     return c;
-  }, [markets, favorites]);
+  }, [listed, favorites]);
 
   const rows = useMemo(() => {
     const ql = q.trim().toLowerCase();
-    return Object.values(markets)
-      .filter((m) => !m.isDelisted)
-      .filter((m) => (ql ? m.coin.toLowerCase().includes(ql) || m.dexFullName.toLowerCase().includes(ql) : cat === "fav" ? favorites.includes(m.coin) : m.category === cat))
-      .sort((a, b) => (b.ctx?.dayNtlVlm ?? 0) - (a.ctx?.dayNtlVlm ?? 0))
+    return listed
+      .filter((m) => (ql ? m.base.toLowerCase().includes(ql) || (m.builder ?? "").toLowerCase().includes(ql) : cat === "fav" ? favorites.includes(m.symbol) : m.category === cat))
+      .sort((a, b) => (b.ctx?.amount24 ?? 0) - (a.ctx?.amount24 ?? 0))
       .slice(0, 200);
-  }, [markets, q, cat, favorites]);
+  }, [listed, q, cat, favorites]);
 
   return (
     <div className="absolute left-0 top-full mt-1 z-50 w-[min(560px,calc(100vw-1rem))] panel bg-panel-2 rise shadow-2xl">
       <div className="p-2 border-b border-line">
-        <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search markets (e.g. ETH, NVDA, xyz:)"
+        <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search markets (e.g. ETH, NVDA, XAU)"
           onKeyDown={(e) => e.key === "Escape" && onClose()}
           className="w-full bg-panel border border-line-2 rounded px-3 py-2 text-sm outline-none focus:border-accent/60" />
       </div>
@@ -57,21 +57,21 @@ export function MarketSelector({ current, onClose }: { current: Market; onClose:
         </div>
         {rows.length === 0 && <div className="text-xs text-muted text-center py-8">No markets match.</div>}
         {rows.map((m) => {
-          const chg = m.ctx && m.ctx.prevDayPx > 0 ? m.ctx.markPx / m.ctx.prevDayPx - 1 : null;
+          const chg = change24(m.ctx);
           return (
-            <div key={m.coin}
-              onClick={() => { router.push(coinToPath(m.coin)); onClose(); }}
-              className={clsx("grid grid-cols-[1.6rem_1fr_6rem_5rem_5.5rem] items-center px-2 py-1.5 rounded cursor-pointer text-xs hover:bg-raised", m.coin === current.coin && "bg-raised")}>
-              <button onClick={(e) => { e.stopPropagation(); toggleFavorite(m.coin); }} className={favorites.includes(m.coin) ? "text-warn" : "text-faint hover:text-muted"} aria-label="Favorite">★</button>
+            <div key={m.symbol}
+              onClick={() => { router.push(marketPath(m.slug)); onClose(); }}
+              className={clsx("grid grid-cols-[1.6rem_1fr_6rem_5rem_5.5rem] items-center px-2 py-1.5 rounded cursor-pointer text-xs hover:bg-raised", m.symbol === current.symbol && "bg-raised")}>
+              <button onClick={(e) => { e.stopPropagation(); toggleFavorite(m.symbol); }} className={favorites.includes(m.symbol) ? "text-warn" : "text-faint hover:text-muted"} aria-label="Favorite">★</button>
               <span className="flex items-center gap-1.5 min-w-0">
                 <span className="font-medium truncate">{m.base}</span>
-                {m.dex && <Badge>{m.dex}</Badge>}
+                {m.builder && <Badge>{m.builder}</Badge>}
                 <span className="text-faint">{m.maxLeverage}x</span>
-                {m.status !== "active" && <Badge tone="warn">{m.status}</Badge>}
+                {m.status !== "active" && <Badge tone="warn">{m.status.replace("_", " ")}</Badge>}
               </span>
-              <span className="num text-right">{fmtPx(m.ctx?.markPx, m.szDecimals)}</span>
+              <span className="num text-right">{fmtPx(m.ctx?.markPx || null, m.pxDecimals)}</span>
               <span className={clsx("num text-right", pnlClass(chg))}>{fmtPct(chg)}</span>
-              <span className="num text-right text-muted">{fmtCompact(m.ctx?.dayNtlVlm)}</span>
+              <span className="num text-right text-muted">{fmtCompact(m.ctx?.amount24)}</span>
             </div>
           );
         })}

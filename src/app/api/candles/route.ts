@@ -1,29 +1,31 @@
 import { NextResponse } from "next/server";
-import { getInfo } from "@/lib/hl/clients";
+import { ORDERLY_API_URL } from "@/lib/config";
 import { clientIp, rateLimit } from "@/lib/server/rateLimit";
 
 export const dynamic = "force-dynamic";
 
-const INTERVALS = new Set(["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"]);
+// TradingView-style resolutions Orderly's /tv/history accepts (4H returns no data, so it's left out).
+const RESOLUTIONS = new Set(["1", "5", "15", "30", "60", "1D", "1W"]);
 
 export async function GET(req: Request) {
   if (!rateLimit(clientIp(req))) return NextResponse.json({ error: "Too many requests" }, { status: 429 });
   const url = new URL(req.url);
-  const coin = url.searchParams.get("coin") ?? "";
-  const interval = url.searchParams.get("interval") ?? "";
-  const startTime = Number(url.searchParams.get("startTime"));
-  const endTime = url.searchParams.get("endTime") ? Number(url.searchParams.get("endTime")) : undefined;
-  if (!/^[A-Za-z0-9:_\-.@]{1,40}$/.test(coin) || !INTERVALS.has(interval) || !Number.isFinite(startTime))
+  const symbol = url.searchParams.get("symbol") ?? "";
+  const resolution = url.searchParams.get("resolution") ?? "";
+  const from = Number(url.searchParams.get("from"));
+  const to = Number(url.searchParams.get("to"));
+  if (!/^PERP_[A-Za-z0-9]+_USDC(_[A-Za-z0-9_]+)?$/.test(symbol) || !RESOLUTIONS.has(resolution) || !Number.isFinite(from) || !Number.isFinite(to))
     return NextResponse.json({ error: "Invalid parameters" }, { status: 400 });
   try {
-    const candles = await getInfo().candleSnapshot({
-      coin,
-      interval: interval as "1m",
-      startTime,
-      ...(endTime ? { endTime } : {}),
-    });
-    // The newest candle is still forming; cache briefly. The client streams updates over WS.
-    return NextResponse.json(candles, { headers: { "Cache-Control": "public, s-maxage=3, stale-while-revalidate=5" } });
+    const qs = new URLSearchParams({ symbol, resolution, from: String(Math.floor(from)), to: String(Math.floor(to)) });
+    const r = await fetch(`${ORDERLY_API_URL}/tv/history?${qs}`, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+    if (!r.ok) throw new Error(`orderly ${r.status}`);
+    const j = (await r.json()) as { s: string; t?: number[]; o?: number[]; h?: number[]; l?: number[]; c?: number[]; v?: number[]; errmsg?: string };
+    if (j.s === "no_data") return NextResponse.json([]);
+    if (j.s !== "ok" || !j.t) throw new Error(j.errmsg || `status ${j.s}`);
+    const out = j.t.map((t, i) => ({ t, o: j.o![i], h: j.h![i], l: j.l![i], c: j.c![i], v: j.v![i] }));
+    // The newest candle is still forming; cache briefly. The client updates it from live trades.
+    return NextResponse.json(out, { headers: { "Cache-Control": "public, s-maxage=3, stale-while-revalidate=5" } });
   } catch (e) {
     console.error("[api/candles]", e);
     return NextResponse.json({ error: "Candle fetch failed", detail: e instanceof Error ? e.message : String(e) }, { status: 502 });

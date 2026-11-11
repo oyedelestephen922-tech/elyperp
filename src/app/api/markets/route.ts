@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { getInfo } from "@/lib/hl/clients";
-import { discoverMarkets, type MarketUniverse } from "@/lib/hl/markets";
+import { fetchUniverse, type MarketUniverse } from "@/lib/orderly/markets";
 import { clientIp, rateLimit } from "@/lib/server/rateLimit";
-import { HL_NETWORK, IS_TESTNET } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +10,7 @@ const FRESH_MS = 15_000; // serve as-is
 const MAX_STALE_MS = 10 * 60_000; // serve while refreshing in the background
 
 function refresh() {
-  inflight ??= discoverMarkets(getInfo(), { isTestnet: IS_TESTNET })
+  inflight ??= fetchUniverse()
     .then((data) => {
       cache = { at: Date.now(), data };
       return data;
@@ -28,14 +26,11 @@ export async function GET(req: Request) {
     if (age > MAX_STALE_MS) await refresh();
     else if (age > FRESH_MS) refresh().catch((e) => console.error("[api/markets] background refresh", e));
     // prices in here are a snapshot (fetchedAt); the client switches to the live stream right away
-    return NextResponse.json(
-      { network: HL_NETWORK, ...cache!.data },
-      { headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=60" } },
-    );
+    return NextResponse.json(cache!.data, { headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=60" } });
   } catch (e) {
     console.error("[api/markets]", e);
     return NextResponse.json(
-      { error: "Market discovery failed", detail: e instanceof Error ? e.message : String(e) },
+      { error: "Market list failed", detail: e instanceof Error ? e.message : String(e) },
       { status: 502 },
     );
   }

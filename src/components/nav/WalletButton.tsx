@@ -3,12 +3,12 @@ import clsx from "clsx";
 import { useEffect, useRef, useState } from "react";
 import { useBalance, useChainId, useConnect, useConnection, useConnectors, useDisconnect, useSwitchChain } from "wagmi";
 import { Button, Modal, Spinner } from "@/components/ui/primitives";
-import { robinhood, HL_APP_URL } from "@/lib/config";
+import { robinhood } from "@/lib/config";
 import { fmtUsd, shortAddr } from "@/lib/format";
-import { useAccountStore, selectSummary } from "@/store/account";
-import { useTrading } from "@/components/providers/TradingProvider";
+import { useCollateral } from "@orderly.network/hooks";
+import { useAccountStage } from "@/lib/orderly/account";
 import { OnboardingModal } from "./OnboardingModal";
-import { humanizeError } from "@/lib/hl/errors";
+import { humanizeError } from "@/lib/errors";
 import { formatUnits } from "viem";
 
 export function NetworkBadge() {
@@ -41,12 +41,17 @@ export function WalletButton() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const states = useAccountStore((s) => s.states);
-  const loaded = useAccountStore((s) => s.loaded);
-  const { status, revoke } = useTrading();
+  const { stage, account } = useAccountStage();
+  const { totalValue } = useCollateral({ dp: 2 });
+  // Drops this device's Orderly key; the next trade asks for a new one.
+  const forgetKey = () => {
+    if (!address) return;
+    // same call Orderly's SDK makes when a key expires
+    account.keyStore.cleanKey(address, "orderlyKey");
+    location.reload();
+  };
   const { data: gasBal } = useBalance({ address, chainId: robinhood.id, query: { enabled: !!address } });
   const menuRef = useRef<HTMLDivElement>(null);
-  const equity = selectSummary(states).equity;
 
   useEffect(() => {
     const h = (e: MouseEvent) => menuRef.current && !menuRef.current.contains(e.target as Node) && setMenuOpen(false);
@@ -109,20 +114,22 @@ export function WalletButton() {
   return (
     <div className="flex items-center gap-2" ref={menuRef}>
       <NetworkBadge />
-      <button
-        onClick={() => setOnboardOpen(true)}
-        className="hidden sm:flex flex-col items-end leading-tight px-2"
-        title="Hyperliquid account equity (all dexes)"
-      >
-        <span className="text-[10px] text-faint">Equity</span>
-        <span className="num text-xs">{loaded ? fmtUsd(equity) : <Spinner />}</span>
-      </button>
+      {stage === "ready" ? (
+        <button onClick={() => setOnboardOpen(true)} className="hidden sm:flex flex-col items-end leading-tight px-2" title="Orderly account value">
+          <span className="text-[10px] text-faint">Account</span>
+          <span className="num text-xs">{fmtUsd(totalValue)}</span>
+        </button>
+      ) : stage === "no_account" || stage === "no_key" ? (
+        <Button variant="accent" className="!py-1.5 hidden sm:inline-flex" onClick={() => setOnboardOpen(true)}>Enable trading</Button>
+      ) : stage === "checking" ? (
+        <span className="hidden sm:block px-2"><Spinner /></span>
+      ) : null}
       <div className="relative">
         <button
           onClick={() => setMenuOpen((o) => !o)}
           className="flex items-center gap-2 rounded-md border border-line-2 bg-raised px-2.5 py-1.5 text-xs hover:border-accent/40"
         >
-          <span className={clsx("h-1.5 w-1.5 rounded-full", status === "ready" ? "bg-accent" : "bg-faint")} />
+          <span className={clsx("h-1.5 w-1.5 rounded-full", stage === "ready" ? "bg-accent" : "bg-faint")} />
           <span className="num">{shortAddr(address)}</span>
         </button>
         {menuOpen && (
@@ -131,14 +138,15 @@ export function WalletButton() {
               <div className="num text-fg break-all">{address}</div>
               <div className="mt-1">via {connector?.name}</div>
               {gasBal && <div className="mt-1 num">{Number(formatUnits(gasBal.value, gasBal.decimals)).toFixed(4)} {robinhood.nativeCurrency.symbol} on {robinhood.name}</div>}
-              <div className="mt-1">Trading key: <span className={status === "ready" ? "text-accent" : "text-warn"}>{status === "ready" ? "approved" : status}</span></div>
+              <div className="mt-1">Trading: <span className={stage === "ready" ? "text-accent" : "text-warn"}>{STAGE_LABEL[stage]}</span></div>
             </div>
             <div className="border-t border-line my-1" />
             <MenuItem onClick={() => { setOnboardOpen(true); setMenuOpen(false); }}>Deposit & account setup</MenuItem>
             <MenuItem onClick={() => navigator.clipboard?.writeText(address ?? "")}>Copy address</MenuItem>
             <MenuItem href={`${robinhood.blockExplorers?.default.url}/address/${address}`}>View on Robinhood Chain explorer</MenuItem>
-            <MenuItem href={`${HL_APP_URL}/explorer/address/${address}`}>View on Hyperliquid explorer</MenuItem>
-            {status === "ready" && <MenuItem onClick={() => { revoke(); setMenuOpen(false); }}>Forget trading key on this device</MenuItem>}
+            {stage === "ready" && address && (
+              <MenuItem onClick={() => { forgetKey(); setMenuOpen(false); }}>Forget trading key on this device</MenuItem>
+            )}
             <MenuItem onClick={() => { disconnect(); setMenuOpen(false); }} danger>Disconnect</MenuItem>
           </div>
         )}
@@ -147,6 +155,15 @@ export function WalletButton() {
     </div>
   );
 }
+
+const STAGE_LABEL: Record<string, string> = {
+  unavailable: "opens soon",
+  disconnected: "not connected",
+  checking: "checking…",
+  no_account: "no account yet",
+  no_key: "not enabled on this device",
+  ready: "enabled",
+};
 
 function MenuItem({ children, onClick, href, danger }: { children: React.ReactNode; onClick?: () => void; href?: string; danger?: boolean }) {
   const cls = clsx("block w-full text-left rounded px-2 py-1.5 hover:bg-raised", danger ? "text-short" : "text-fg");

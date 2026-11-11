@@ -1,311 +1,271 @@
 "use client";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useConnection } from "wagmi";
-import type { Market } from "@/lib/hl/markets";
 import {
-  BASE_MAKER_FEE, BASE_TAKER_FEE, checkOrder, estimateFee, estimateLiqPx, marketOrderPx, roundPrice, walkBook, type Side,
-} from "@/lib/hl/math";
-import { placeOrder, updateLeverage, type LegResult } from "@/lib/hl/trade";
-import { humanizeError, logError } from "@/lib/hl/errors";
-import { fmtPx, fmtUsd } from "@/lib/format";
-import { useTrading } from "@/components/providers/TradingProvider";
-import { selectPositions, useAccountStore } from "@/store/account";
-import { usePrefs } from "@/store/markets";
+  useAccountInfo, useMarginModeBySymbol, useOrderEntry, usePositionStream, useSymbolLeverage, useSymbolsInfo,
+} from "@orderly.network/hooks";
+import { MarginMode, OrderSide, OrderType } from "@orderly.network/types";
+import type { Market } from "@/lib/orderly/markets";
+import { humanizeError, logError } from "@/lib/errors";
+import { fmtPx, fmtSize, fmtUsd } from "@/lib/format";
+import { openConnect, openOnboard, useAccountStage } from "@/lib/orderly/account";
+import { useMarkets } from "@/store/markets";
 import { useTerminal } from "@/store/terminal";
 import { useToasts } from "@/store/toasts";
-import { useActiveAsset } from "@/hooks/useActiveAsset";
-import { useIsStale, useL2Book } from "@/hooks/useMarketData";
+import { useIsStale } from "@/hooks/useMarketData";
 import { Button, Modal, Spinner } from "@/components/ui/primitives";
 
-type OrderType = "market" | "limit";
+type Tif = "GTC" | "IOC" | "FOK" | "POST_ONLY";
 
 export function OrderPanel({ market }: { market: Market }) {
-  const { isConnected, address } = useConnection();
-  const { status: agentStatus, exchange } = useTrading();
-  const states = useAccountStore((s) => s.states);
-  const fees = useAccountStore((s) => s.fees);
-  const accountLoaded = useAccountStore((s) => s.loaded);
-  const { slippage, setSlippage } = usePrefs();
+  const symbols = useSymbolsInfo();
+  const ready = !symbols.isNil && !!symbols[market.symbol]?.("symbol");
+  const { marginMode } = useMarginModeBySymbol(market.symbol);
+  if (!ready) {
+    return <div className="panel grid place-items-center py-16 text-xs text-muted"><span className="flex items-center gap-2"><Spinner /> Loading market…</span></div>;
+  }
+  // Remount when the market or margin mode changes so the order form starts clean.
+  return <OrderEntryForm key={`${market.symbol}:${marginMode}`} market={market} marginMode={marginMode ?? MarginMode.CROSS} />;
+}
+
+function OrderEntryForm({ market, marginMode }: { market: Market; marginMode: MarginMode }) {
+  const { stage } = useAccountStage();
+  const sessionOpen = useMarkets((s) => s.sessions[market.symbol]?.open);
+  const stale = useIsStale();
   const pickedPx = useTerminal((s) => s.pickedPx);
-  const { data: asset, refresh: refreshAsset } = useActiveAsset(market.coin);
-  const stale = useIsStale(market.dex, market.coin);
-  const book = useL2Book(market.coin, null);
+  const { data: accountInfo } = useAccountInfo();
+  const [{ rows: positions }] = usePositionStream(market.symbol);
+  const { maxLeverage } = useSymbolLeverage(market.symbol);
   const push = useToasts((s) => s.push);
   const update = useToasts((s) => s.update);
 
-  const [side, setSide] = useState<Side>("long");
-  const [type, setType] = useState<OrderType>("market");
-  const [tif, setTif] = useState<"Gtc" | "Ioc" | "Alo">("Gtc");
-  const [pxStr, setPxStr] = useState("");
-  const [sizeStr, setSizeStr] = useState("");
+  const entry = useOrderEntry(market.symbol, {
+    initialOrder: { side: OrderSide.BUY, order_type: OrderType.MARKET, margin_mode: marginMode },
+  });
+  const { formattedOrder: o, setValue, setValues, metaState, submit, maxQty, estLiqPrice, estLeverage, estSlippage, freeCollateral, symbolLeverage, markPrice, isMutating } = entry;
+
+  const [tif, setTif] = useState<Tif>("GTC");
   const [sizeUnit, setSizeUnit] = useState<"base" | "usd">("usd");
-  const [reduceOnly, setReduceOnly] = useState(false);
   const [tpsl, setTpsl] = useState(false);
-  const [tpStr, setTpStr] = useState("");
-  const [slStr, setSlStr] = useState("");
   const [levOpen, setLevOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
   const inflight = useRef(false);
 
-  // Reset form when market changes
+  const side = o.side === OrderSide.SELL ? "short" : "long";
+  const isLimit = o.order_type === OrderType.LIMIT;
+  const position = positions?.find((p) => p.symbol === market.symbol && (p.margin_mode ?? MarginMode.CROSS) === marginMode && p.position_qty !== 0) ?? null;
+  const leverage = symbolLeverage ?? position?.leverage ?? null;
+
+  // Clicking a price in the order book switches to a limit order at that price (once per click)
+  const lastPick = useRef(pickedPx?.at ?? 0);
   useEffect(() => {
-    setPxStr(""); setSizeStr(""); setTpStr(""); setSlStr(""); setReduceOnly(false);
-  }, [market.coin]);
+    if (!pickedPx || pickedPx.at === lastPick.current) return;
+    lastPick.current = pickedPx.at;
+    setValues({ order_type: OrderType.LIMIT, order_price: pickedPx.px.toFixed(market.pxDecimals) });
+  }, [pickedPx, market.pxDecimals, setValues]);
 
-  // Clicking a price in the order book switches to a limit order at that price
-  useEffect(() => {
-    if (!pickedPx) return;
-    setType("limit");
-    setPxStr(roundPrice(pickedPx.px, market.szDecimals));
-  }, [pickedPx, market.szDecimals]);
-
-  const leverage = asset?.leverage.value ?? Math.min(10, market.maxLeverage);
-  const marginType = asset?.leverage.type ?? (market.isolatedOnly ? "isolated" : "cross");
-  const refPx = market.ctx?.midPx ?? market.ctx?.markPx ?? 0;
-  const limitPx = Number(pxStr) || 0;
-  const pxForSize = type === "limit" && limitPx > 0 ? limitPx : refPx;
-  const sizeInput = Number(sizeStr) || 0;
-  const sizeBase = sizeUnit === "base" ? sizeInput : pxForSize > 0 ? sizeInput / pxForSize : 0;
-  const maxSize = asset ? Number(asset.maxTradeSzs[side === "long" ? 0 : 1]) : null;
-  const available = asset ? Number(asset.availableToTrade[side === "long" ? 0 : 1]) : null;
-  const position = selectPositions(states).find((p) => p.coin === market.coin) ?? null;
-
-  const check = useMemo(
-    () =>
-      checkOrder({
-        side, type, size: sizeBase, limitPx: type === "limit" ? limitPx : undefined, refPx, leverage,
-        maxLeverage: market.maxLeverage, szDecimals: market.szDecimals, reduceOnly,
-        availableMargin: null, maxSize: isConnected ? maxSize : null,
-        tpPx: tpsl ? Number(tpStr) || undefined : undefined, slPx: tpsl ? Number(slStr) || undefined : undefined,
-        marketActive: market.status === "active",
-      }),
-    [side, type, sizeBase, limitPx, refPx, leverage, market, reduceOnly, maxSize, isConnected, tpsl, tpStr, slStr],
-  );
-
-  const takerRate = fees ? Number(fees.userCrossRate) : BASE_TAKER_FEE;
-  const makerRate = fees ? Number(fees.userAddRate) : BASE_MAKER_FEE;
-  const crosses = type === "market" || tif === "Ioc" || (limitPx > 0 && refPx > 0 && (side === "long" ? limitPx >= refPx : limitPx <= refPx));
-  const feeRate = crosses ? takerRate : makerRate;
-  const sz = Number(check.sizeStr);
-  const worstPx = type === "market" && refPx > 0 ? Number(marketOrderPx(refPx, side === "long", slippage, market.szDecimals)) : null;
-  const bookSide = book ? (side === "long" ? book.asks : book.bids) : null;
-  const fill = type === "market" && bookSide && sz > 0 ? walkBook(bookSide, sz, side === "long", worstPx ?? undefined) : null;
-  const bestPx = bookSide?.[0]?.px ?? null;
-  const entryPx = type === "market" ? fill?.avgPx ?? bestPx ?? refPx : limitPx;
-  const spreadPct = book?.asks[0] && book?.bids[0] ? (book.asks[0].px - book.bids[0].px) / book.bids[0].px : null;
-  const fee = estimateFee(sz, entryPx, feeRate);
-  const dexState = states[market.dex];
-  const crossFree = dexState ? Number(dexState.withdrawable) : 0;
-  const liqPx = sz > 0 && entryPx > 0
-    ? estimateLiqPx({ side, entryPx, size: sz, margin: marginType === "isolated" ? check.margin : crossFree + check.margin, maxLeverage: market.maxLeverage })
-    : null;
-  const liqDistance = liqPx && entryPx ? Math.abs(liqPx - entryPx) / entryPx : null;
-
-  const warnings = [...check.warnings];
-  if (stale) warnings.unshift("Live prices are delayed. Estimates may be out of date.");
-  if (type === "market" && sz > 0 && fill) {
-    if (fill.filled === 0) warnings.unshift(`Nothing on the book within ${(slippage * 100).toFixed(1)}% slippage. This order won't fill. Raise slippage or use a limit order.`);
-    else if (fill.filled + 1e-12 < sz) warnings.unshift(`Only ~${fill.filled.toFixed(market.szDecimals)} ${market.base} is available within your slippage. The rest will be cancelled.`);
-  }
-  if (spreadPct != null && spreadPct > 0.01) warnings.push(`Wide spread (${(spreadPct * 100).toFixed(2)}%). Liquidity is thin on this market.`);
-  if (type === "market" && slippage > 0.02) warnings.push(`Slippage tolerance is ${(slippage * 100).toFixed(1)}%, you may fill well away from the mark.`);
-  if (liqDistance != null && liqDistance < 0.05 && !reduceOnly) warnings.push(`Liquidation is only ~${(liqDistance * 100).toFixed(1)}% from entry.`);
-  if (market.dex && market.category !== "crypto") warnings.push("HIP-3 market: oracle, hours and halts are set by the deployer. Check the market info bar.");
-
-  const blocker = !isConnected
-    ? "connect"
-    : !accountLoaded
-      ? "loading"
-      : agentStatus !== "ready"
-        ? "enable"
-        : null;
-
-  const submit = async () => {
-    if (inflight.current || !exchange) return; // duplicate-submission guard
-    inflight.current = true;
-    setSubmitting(true);
-    setConfirmOpen(false);
-    const title = `${side === "long" ? "Long" : "Short"} ${check.sizeStr} ${market.base} ${type === "market" ? "market" : "@ " + pxStr}`;
-    const id = push({ title, state: "pending", detail: "Signing…" });
-    try {
-      update(id, { state: "submitted", detail: "Sent to Hyperliquid" });
-      const legs = await placeOrder(exchange, {
-        market, side, type, tif, size: sz, limitPx, refPx, slippage, reduceOnly,
-        tpPx: tpsl ? Number(tpStr) || undefined : undefined, slPx: tpsl ? Number(slStr) || undefined : undefined,
-      });
-      reportLegs(id, legs);
-      if (legs[0]?.state === "filled" || legs[0]?.state === "open" || legs[0]?.state === "partial") {
-        setSizeStr(""); setTpStr(""); setSlStr("");
-      }
-    } catch (e) {
-      logError("placeOrder", e);
-      update(id, { state: "failed", detail: humanizeError(e) });
-    } finally {
-      inflight.current = false;
-      setSubmitting(false);
-      refreshAsset();
-    }
+  const setTifValue = (t: Tif) => {
+    setTif(t);
+    setValue("order_type_ext", t === "GTC" ? undefined : (t as OrderType));
   };
 
-  const reportLegs = (id: string, legs: LegResult[]) => {
-    const [main, ...rest] = legs;
-    const detail = [
-      main.state === "filled" || main.state === "partial" ? `Filled ${main.filledSz} @ ${main.avgPx}` : main.error ?? (main.state === "open" ? "Resting on the book" : ""),
-      ...rest.map((l) => `${l.label}: ${l.state}${l.error ? ` (${l.error})` : ""}`),
-    ].filter(Boolean).join(" · ");
-    update(id, { state: main.state, detail: main.error ? humanizeError(main.error) + (rest.length ? " · " + detail : "") : detail, oid: main.oid });
-  };
+  const qty = Number(o.order_quantity) || 0;
+  const total = Number(o.total) || 0;
+  const refPx = isLimit ? Number(o.order_price) || 0 : markPrice ?? market.ctx?.markPx ?? 0;
+  const isRwa = market.category !== "crypto";
+  const takerBps = Number((isRwa ? accountInfo?.rwa_taker_fee_rate : undefined) ?? accountInfo?.futures_taker_fee_rate ?? NaN);
+  const makerBps = Number((isRwa ? accountInfo?.rwa_maker_fee_rate : undefined) ?? accountInfo?.futures_maker_fee_rate ?? NaN);
+  const isMaker = isLimit && tif === "POST_ONLY";
+  const feeBps = isMaker ? makerBps : takerBps;
+  const feeEst = Number.isFinite(feeBps) && total > 0 ? (total * feeBps) / 10_000 : null;
+  const marginEst = leverage && total > 0 ? total / leverage : null;
+
+  const errors = useMemo(() => {
+    const e = metaState.errors ?? {};
+    return Object.entries(e)
+      .filter(([k]) => metaState.dirty[k as keyof typeof metaState.dirty] || metaState.submitted)
+      .map(([, v]) => v?.message)
+      .filter((m): m is string => !!m);
+  }, [metaState]);
+
+  const warnings: string[] = [];
+  if (stale) warnings.push("Live prices are delayed. Estimates may be out of date.");
+  if (market.session && sessionOpen === false) warnings.push("This market's trading session is closed. Orders may be rejected until it opens.");
+  if (estSlippage != null && estSlippage > 0.01 && !isLimit) warnings.push(`Estimated slippage is ${(estSlippage * 100).toFixed(2)}%. Liquidity is thin.`);
+  if (estLiqPrice && refPx > 0 && Math.abs(estLiqPrice - refPx) / refPx < 0.05 && !o.reduce_only) warnings.push(`Liquidation is only ~${((Math.abs(estLiqPrice - refPx) / refPx) * 100).toFixed(1)}% from entry.`);
+  if (market.builder) warnings.push(`Listed on Orderly by the builder "${market.builder}". Its oracle and settings are set by that builder.`);
+
+  const blocker = stage === "unavailable" ? "unavailable" : stage === "disconnected" ? "connect" : stage === "checking" ? "loading" : stage !== "ready" ? "setup" : null;
+  const tradable = market.status === "active" || market.status === "reduce_only" || market.status === "post_only";
 
   const setPct = (pct: number) => {
-    if (maxSize == null) return;
-    const base = (maxSize * pct) / 100;
-    setSizeStr(sizeUnit === "base" ? String(Number(base.toFixed(market.szDecimals))) : (base * pxForSize).toFixed(2));
+    if (!(maxQty > 0)) return;
+    const raw = (maxQty * pct) / 100;
+    const stepped = Math.floor(raw / market.baseTick) * market.baseTick;
+    setValue("order_quantity", stepped.toFixed(market.szDecimals));
+  };
+
+  const doSubmit = async () => {
+    if (inflight.current) return; // duplicate-submission guard
+    inflight.current = true;
+    setConfirmOpen(false);
+    const title = `${side === "long" ? "Long" : "Short"} ${fmtSize(qty, market.szDecimals)} ${market.base} ${isLimit ? "@ " + o.order_price : "market"}`;
+    const id = push({ title, state: "pending", detail: "Sending to Orderly…" });
+    try {
+      const res = await submit({ resetOnSuccess: true });
+      if (res?.success) {
+        update(id, { state: "submitted", detail: isLimit ? "Order accepted" : "Order sent. Fills show in Positions." });
+        setTpsl(false);
+      } else {
+        update(id, { state: "failed", detail: humanizeError((res as { message?: string })?.message ?? "Order rejected") });
+      }
+    } catch (e) {
+      logError("submit order", e);
+      // validation errors come back as an object of field messages
+      const msg = e && typeof e === "object" && !(e instanceof Error)
+        ? Object.values(e as Record<string, { message?: string }>).map((v) => v?.message).filter(Boolean).join(" · ")
+        : humanizeError(e);
+      update(id, { state: "failed", detail: msg || humanizeError(e) });
+    } finally {
+      inflight.current = false;
+    }
   };
 
   return (
     <div className="panel flex flex-col text-xs">
       <div className="grid grid-cols-2 gap-1 p-2">
-        <button onClick={() => setSide("long")} className={clsx("py-2 rounded font-semibold transition-colors", side === "long" ? "bg-long text-black" : "bg-raised text-muted hover:text-fg")}>Long</button>
-        <button onClick={() => setSide("short")} className={clsx("py-2 rounded font-semibold transition-colors", side === "short" ? "bg-short text-white" : "bg-raised text-muted hover:text-fg")}>Short</button>
+        <button onClick={() => setValue("side", OrderSide.BUY)} className={clsx("py-2 rounded font-semibold transition-colors", side === "long" ? "bg-long text-black" : "bg-raised text-muted hover:text-fg")}>Long</button>
+        <button onClick={() => setValue("side", OrderSide.SELL)} className={clsx("py-2 rounded font-semibold transition-colors", side === "short" ? "bg-short text-white" : "bg-raised text-muted hover:text-fg")}>Short</button>
       </div>
 
       <div className="flex items-center gap-2 px-2">
-        {(["market", "limit"] as const).map((t) => (
-          <button key={t} onClick={() => setType(t)} className={clsx("px-2 py-1 rounded capitalize", type === t ? "text-fg bg-raised" : "text-muted hover:text-fg")}>{t}</button>
+        {([OrderType.MARKET, OrderType.LIMIT] as const).map((t) => (
+          <button key={t} onClick={() => setValue("order_type", t)} className={clsx("px-2 py-1 rounded capitalize", o.order_type === t ? "text-fg bg-raised" : "text-muted hover:text-fg")}>{t.toLowerCase()}</button>
         ))}
         <div className="flex-1" />
-        <button onClick={() => setLevOpen(true)} disabled={!isConnected}
+        <button onClick={() => setLevOpen(true)} disabled={stage !== "ready"}
           className="rounded border border-line-2 px-2 py-1 hover:border-accent/50 disabled:opacity-50" title="Margin mode & leverage">
-          <span className="capitalize text-muted">{marginType}</span> <span className="num text-accent">{leverage}x</span>
+          <span className="capitalize text-muted">{marginMode.toLowerCase()}</span> <span className="num text-accent">{leverage ? `${leverage}x` : "--"}</span>
         </button>
       </div>
 
       <div className="flex flex-col gap-2 p-2">
         <div className="flex justify-between text-muted">
           <span>Available to trade</span>
-          <span className="num text-fg">{available != null ? fmtUsd(available) : isConnected ? <Spinner /> : "--"}</span>
+          <span className="num text-fg">{stage === "ready" ? fmtUsd(freeCollateral) : "--"}</span>
         </div>
         {position && (
           <div className="flex justify-between text-muted">
             <span>Current position</span>
-            <span className={clsx("num", position.side === "long" ? "text-long" : "text-short")}>{position.szi} {market.base}</span>
+            <span className={clsx("num", position.position_qty > 0 ? "text-long" : "text-short")}>{fmtSize(position.position_qty, market.szDecimals)} {market.base}</span>
           </div>
         )}
 
-        {type === "limit" && (
+        {isLimit && (
           <Field label="Price (USD)">
-            <input inputMode="decimal" value={pxStr} onChange={(e) => setPxStr(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0.00" className="num flex-1 bg-transparent outline-none" />
-            <button className="text-accent text-[11px]" onClick={() => refPx && setPxStr(roundPrice(refPx, market.szDecimals))}>Mid</button>
+            <input inputMode="decimal" value={o.order_price ?? ""} onChange={(e) => setValue("order_price", e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0.00" className="num flex-1 bg-transparent outline-none min-w-0" />
+            <button className="text-accent text-[11px]" onClick={() => markPrice && setValue("order_price", markPrice.toFixed(market.pxDecimals))}>Mark</button>
           </Field>
         )}
 
         <Field label="Size">
-          <input inputMode="decimal" value={sizeStr} onChange={(e) => setSizeStr(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" className="num flex-1 bg-transparent outline-none" />
-          <button className="text-muted hover:text-fg text-[11px]" onClick={() => { setSizeUnit((u) => (u === "usd" ? "base" : "usd")); setSizeStr(""); }}>
+          {sizeUnit === "usd" ? (
+            <input inputMode="decimal" value={o.total ?? ""} onChange={(e) => setValue("total", e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" className="num flex-1 bg-transparent outline-none min-w-0" />
+          ) : (
+            <input inputMode="decimal" value={o.order_quantity ?? ""} onChange={(e) => setValue("order_quantity", e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" className="num flex-1 bg-transparent outline-none min-w-0" />
+          )}
+          <button className="text-muted hover:text-fg text-[11px]" onClick={() => setSizeUnit((u) => (u === "usd" ? "base" : "usd"))}>
             {sizeUnit === "usd" ? "USD" : market.base} ⇄
           </button>
         </Field>
         <div className="flex justify-between text-faint">
-          <span>{sizeUnit === "usd" ? `≈ ${check.sizeStr} ${market.base}` : `≈ ${fmtUsd(sz * pxForSize)}`}</span>
-          <span>Lot {(10 ** -market.szDecimals).toFixed(market.szDecimals)}</span>
+          <span>{sizeUnit === "usd" ? `≈ ${fmtSize(qty, market.szDecimals)} ${market.base}` : `≈ ${fmtUsd(total)}`}</span>
+          <span>Min {fmtUsd(market.minNotional, 0)}</span>
         </div>
         <div className="grid grid-cols-4 gap-1">
           {[25, 50, 75, 100].map((p) => (
-            <button key={p} onClick={() => setPct(p)} disabled={maxSize == null}
+            <button key={p} onClick={() => setPct(p)} disabled={!(maxQty > 0)}
               className="rounded bg-raised py-1 text-muted hover:text-fg disabled:opacity-40">{p}%</button>
           ))}
         </div>
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1">
           <label className="flex items-center gap-1.5 text-muted cursor-pointer">
-            <input type="checkbox" checked={reduceOnly} onChange={(e) => { setReduceOnly(e.target.checked); if (e.target.checked) setTpsl(false); }} className="accent-[#18d98b]" /> Reduce only
+            <input type="checkbox" checked={!!o.reduce_only} onChange={(e) => { setValue("reduce_only", e.target.checked); if (e.target.checked) { setTpsl(false); setValues({ tp_trigger_price: undefined, sl_trigger_price: undefined }); } }} className="accent-[#18d98b]" /> Reduce only
           </label>
           <label className="flex items-center gap-1.5 text-muted cursor-pointer">
-            <input type="checkbox" checked={tpsl} disabled={reduceOnly} onChange={(e) => setTpsl(e.target.checked)} className="accent-[#18d98b]" /> TP / SL
+            <input type="checkbox" checked={tpsl} disabled={!!o.reduce_only} onChange={(e) => { setTpsl(e.target.checked); if (!e.target.checked) setValues({ tp_trigger_price: undefined, sl_trigger_price: undefined }); }} className="accent-[#18d98b]" /> TP / SL
           </label>
-          {type === "limit" ? (
-            <select value={tif} onChange={(e) => setTif(e.target.value as typeof tif)} className="ml-auto bg-panel-2 border border-line-2 rounded px-1 py-0.5 text-muted">
-              <option value="Gtc">GTC</option><option value="Ioc">IOC</option><option value="Alo">Post only</option>
+          {isLimit && (
+            <select value={tif} onChange={(e) => setTifValue(e.target.value as Tif)} className="ml-auto bg-panel-2 border border-line-2 rounded px-1 py-0.5 text-muted">
+              <option value="GTC">GTC</option><option value="IOC">IOC</option><option value="FOK">FOK</option><option value="POST_ONLY">Post only</option>
             </select>
-          ) : (
-            <label className="ml-auto flex items-center gap-1 text-muted">
-              Slippage
-              <select value={slippage} onChange={(e) => setSlippage(Number(e.target.value))} className="bg-panel-2 border border-line-2 rounded px-1 py-0.5">
-                {[0.001, 0.003, 0.005, 0.01, 0.02, 0.05].map((v) => <option key={v} value={v}>{(v * 100).toFixed(1)}%</option>)}
-              </select>
-            </label>
           )}
         </div>
 
         {tpsl && (
           <div className="grid grid-cols-2 gap-2">
             <Field label="Take profit">
-              <input inputMode="decimal" value={tpStr} onChange={(e) => setTpStr(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="Price" className="num w-full bg-transparent outline-none" />
+              <input inputMode="decimal" value={o.tp_trigger_price ?? ""} onChange={(e) => setValue("tp_trigger_price", e.target.value.replace(/[^0-9.]/g, ""))} placeholder="Price" className="num w-full bg-transparent outline-none min-w-0" />
             </Field>
             <Field label="Stop loss">
-              <input inputMode="decimal" value={slStr} onChange={(e) => setSlStr(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="Price" className="num w-full bg-transparent outline-none" />
+              <input inputMode="decimal" value={o.sl_trigger_price ?? ""} onChange={(e) => setValue("sl_trigger_price", e.target.value.replace(/[^0-9.]/g, ""))} placeholder="Price" className="num w-full bg-transparent outline-none min-w-0" />
             </Field>
-            <RoeHint price={Number(tpStr)} entry={entryPx} side={side} lev={leverage} />
-            <RoeHint price={Number(slStr)} entry={entryPx} side={side} lev={leverage} />
+            <PnlHint pnl={o.tp_pnl} />
+            <PnlHint pnl={o.sl_pnl} />
           </div>
         )}
 
         <div className="flex flex-col gap-1 rounded border border-line bg-panel-2 p-2 mt-1">
-          <Row k={type === "market" ? "Est. entry price" : "Entry price"} v={fmtPx(entryPx || null, market.szDecimals)} />
-          {worstPx && <Row k={`Worst price (${(slippage * 100).toFixed(1)}% slip)`} v={fmtPx(worstPx, market.szDecimals)} />}
-          <Row k="Position value" v={fmtUsd(check.notional || 0)} />
-          <Row k="Required margin" v={fmtUsd(Number.isFinite(check.margin) ? check.margin : 0)} />
-          <Row k={`Est. fee (${crosses ? "taker" : "maker"} ${(feeRate * 100).toFixed(4)}%)`} v={fmtUsd(fee, 4)} />
-          <Row k="Est. liquidation price" v={reduceOnly ? "--" : <span className="text-warn">{fmtPx(liqPx, market.szDecimals)}</span>} />
+          <Row k={isLimit ? "Entry price" : "Mark price"} v={fmtPx(refPx || null, market.pxDecimals)} />
+          {!isLimit && <Row k="Est. slippage" v={estSlippage != null ? `${(estSlippage * 100).toFixed(2)}%` : "--"} />}
+          <Row k="Position value" v={fmtUsd(total)} />
+          <Row k="Required margin" v={marginEst != null ? fmtUsd(marginEst) : "--"} />
+          <Row k={`Est. fee${Number.isFinite(feeBps) ? ` (${isMaker ? "maker" : "taker"} ${(feeBps / 100).toFixed(3)}%)` : ""}`} v={feeEst != null ? fmtUsd(feeEst, 4) : "--"} />
+          {estLeverage != null && <Row k="Account leverage after" v={`${estLeverage.toFixed(2)}x`} />}
+          <Row k="Est. liquidation price" v={o.reduce_only ? "--" : <span className="text-warn">{fmtPx(estLiqPrice, market.pxDecimals)}</span>} />
         </div>
 
-        {sizeInput > 0 && check.errors.length > 0 && (
-          <ul className="text-short flex flex-col gap-0.5">{check.errors.map((e) => <li key={e}>• {e}</li>)}</ul>
-        )}
-        {sizeInput > 0 && warnings.length > 0 && (
-          <ul className="text-warn flex flex-col gap-0.5">{warnings.map((w) => <li key={w}>• {w}</li>)}</ul>
-        )}
+        {errors.length > 0 && <ul className="text-short flex flex-col gap-0.5">{errors.map((e) => <li key={e}>• {e}</li>)}</ul>}
+        {qty > 0 && warnings.length > 0 && <ul className="text-warn flex flex-col gap-0.5">{warnings.map((w) => <li key={w}>• {w}</li>)}</ul>}
 
-        {blocker === "connect" ? (
-          <Button variant="accent" className="w-full py-2.5" onClick={() => window.dispatchEvent(new Event("elyperp:connect"))}>Connect wallet to trade</Button>
+        {!tradable ? (
+          <Button className="w-full py-2.5" disabled>Market is {market.status.replace("_", " ")}</Button>
+        ) : blocker === "unavailable" ? (
+          <Button className="w-full py-2.5" disabled>Trading opens soon</Button>
+        ) : blocker === "connect" ? (
+          <Button variant="accent" className="w-full py-2.5" onClick={openConnect}>Connect wallet to trade</Button>
         ) : blocker === "loading" ? (
-          <Button className="w-full py-2.5" disabled><Spinner /> Loading account…</Button>
-        ) : blocker === "enable" ? (
-          <Button variant="accent" className="w-full py-2.5" onClick={() => window.dispatchEvent(new Event("elyperp:onboard"))}>
-            {agentStatus === "checking" ? "Checking trading key…" : "Set up account to trade"}
-          </Button>
+          <Button className="w-full py-2.5" disabled><Spinner /> Checking account…</Button>
+        ) : blocker === "setup" ? (
+          <Button variant="accent" className="w-full py-2.5" onClick={openOnboard}>Set up account to trade</Button>
         ) : (
-          <Button variant={side} className="w-full py-2.5 font-semibold" disabled={submitting || check.errors.length > 0} onClick={() => setConfirmOpen(true)}>
-            {submitting ? <Spinner /> : `${side === "long" ? "Buy / Long" : "Sell / Short"} ${market.base}`}
+          <Button variant={side} className="w-full py-2.5 font-semibold" disabled={isMutating || !(qty > 0)} onClick={() => setConfirmOpen(true)}>
+            {isMutating ? <Spinner /> : `${side === "long" ? "Buy / Long" : "Sell / Short"} ${market.base}`}
           </Button>
-        )}
-        {address && accountLoaded && !dexState && market.dex && (
-          <p className="text-faint">No balance on the {market.dexFullName} dex yet ({market.collateral} collateral). See account setup.</p>
         )}
       </div>
 
-      <LeverageModal open={levOpen} onClose={() => setLevOpen(false)} market={market} current={leverage} currentType={marginType}
-        onDone={refreshAsset} hasPosition={!!position} />
+      <LeverageModal open={levOpen} onClose={() => setLevOpen(false)} market={market} current={leverage ?? 1}
+        maxLeverage={maxLeverage || market.maxLeverage} marginMode={marginMode} hasPosition={!!position} />
 
       <Modal open={confirmOpen} onClose={() => setConfirmOpen(false)} title="Confirm order">
         <div className="flex flex-col gap-1.5 text-xs">
-          <Row k="Market" v={<span className="num">{market.coin}</span>} />
-          <Row k="Side" v={<span className={side === "long" ? "text-long" : "text-short"}>{side.toUpperCase()}{reduceOnly ? " (reduce only)" : ""}</span>} />
-          <Row k="Type" v={type === "market" ? `Market (IOC, max ${(slippage * 100).toFixed(1)}% slippage)` : `Limit ${tif === "Alo" ? "post-only" : tif}`} />
-          <Row k="Size" v={`${check.sizeStr} ${market.base}`} />
-          <Row k="Price" v={type === "market" ? `≈ ${fmtPx(entryPx, market.szDecimals)} (worst ${fmtPx(worstPx, market.szDecimals)})` : fmtPx(limitPx, market.szDecimals)} />
-          <Row k="Leverage" v={`${leverage}x ${marginType}`} />
-          <Row k="Margin" v={fmtUsd(check.margin)} />
-          <Row k="Est. fee" v={fmtUsd(fee, 4)} />
-          <Row k="Est. liquidation" v={fmtPx(liqPx, market.szDecimals)} />
-          {tpsl && Number(tpStr) > 0 && <Row k="Take profit" v={tpStr} />}
-          {tpsl && Number(slStr) > 0 && <Row k="Stop loss" v={slStr} />}
+          <Row k="Market" v={<span className="num">{market.base}-PERP{market.builder ? ` (${market.builder})` : ""}</span>} />
+          <Row k="Side" v={<span className={side === "long" ? "text-long" : "text-short"}>{side.toUpperCase()}{o.reduce_only ? " (reduce only)" : ""}</span>} />
+          <Row k="Type" v={isLimit ? `Limit ${tif === "POST_ONLY" ? "post-only" : tif}` : "Market"} />
+          <Row k="Size" v={`${fmtSize(qty, market.szDecimals)} ${market.base}`} />
+          <Row k="Price" v={isLimit ? fmtPx(Number(o.order_price), market.pxDecimals) : `Market (mark ${fmtPx(refPx, market.pxDecimals)})`} />
+          <Row k="Value" v={fmtUsd(total)} />
+          <Row k="Leverage" v={leverage ? `${leverage}x ${marginMode.toLowerCase()}` : "--"} />
+          <Row k="Est. fee" v={feeEst != null ? fmtUsd(feeEst, 4) : "--"} />
+          <Row k="Est. liquidation" v={fmtPx(estLiqPrice, market.pxDecimals)} />
+          {tpsl && Number(o.tp_trigger_price) > 0 && <Row k="Take profit" v={o.tp_trigger_price} />}
+          {tpsl && Number(o.sl_trigger_price) > 0 && <Row k="Stop loss" v={o.sl_trigger_price} />}
           {warnings.length > 0 && <ul className="text-warn mt-1">{warnings.map((w) => <li key={w}>• {w}</li>)}</ul>}
           <div className="grid grid-cols-2 gap-2 mt-3">
             <Button onClick={() => setConfirmOpen(false)}>Cancel</Button>
-            <Button variant={side} onClick={submit} disabled={submitting}>Confirm</Button>
+            <Button variant={side} onClick={doSubmit} disabled={isMutating}>Confirm</Button>
           </div>
         </div>
       </Modal>
@@ -331,33 +291,36 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
-function RoeHint({ price, entry, side, lev }: { price: number; entry: number; side: Side; lev: number }) {
-  if (!(price > 0) || !(entry > 0)) return <span />;
-  const r = ((price - entry) / entry) * (side === "long" ? 1 : -1) * lev;
-  return <span className={clsx("num text-[11px]", r >= 0 ? "text-long" : "text-short")}>ROE {(r * 100).toFixed(1)}%</span>;
+function PnlHint({ pnl }: { pnl?: string }) {
+  const v = Number(pnl);
+  if (!pnl || !Number.isFinite(v)) return <span />;
+  return <span className={clsx("num text-[11px]", v >= 0 ? "text-long" : "text-short")}>Est. PnL {fmtUsd(v)}</span>;
 }
 
-export function LeverageModal({ open, onClose, market, current, currentType, onDone, hasPosition }: {
-  open: boolean; onClose: () => void; market: Market; current: number; currentType: "cross" | "isolated"; onDone: () => void; hasPosition: boolean;
+export function LeverageModal({ open, onClose, market, current, maxLeverage, marginMode, hasPosition }: {
+  open: boolean; onClose: () => void; market: Market; current: number; maxLeverage: number; marginMode: MarginMode; hasPosition: boolean;
 }) {
-  const { exchange, status } = useTrading();
+  const { update: updateLeverage } = useSymbolLeverage(market.symbol);
+  const { update: updateMode } = useMarginModeBySymbol(market.symbol);
   const [lev, setLev] = useState(current);
-  const [mode, setMode] = useState(currentType);
+  const [mode, setMode] = useState<MarginMode>(marginMode);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { if (open) { setLev(current); setMode(currentType); setErr(null); } }, [open, current, currentType]);
+  useEffect(() => { if (open) { setLev(Math.min(current, maxLeverage)); setMode(marginMode); setErr(null); } }, [open, current, marginMode, maxLeverage]);
 
   const save = async () => {
-    if (!exchange) return;
     setBusy(true);
     setErr(null);
     try {
-      await updateLeverage(exchange, market, lev, mode === "cross");
-      useToasts.getState().push({ title: `${market.base} leverage set to ${lev}x ${mode}`, state: "success" });
-      onDone();
+      if (mode !== marginMode) {
+        const r = await updateMode(mode);
+        if (!r.success) throw new Error(r.message || "Couldn't change margin mode");
+      }
+      await updateLeverage({ leverage: lev, symbol: market.symbol, margin_mode: mode });
+      useToasts.getState().push({ title: `${market.base} set to ${lev}x ${mode.toLowerCase()}`, state: "success" });
       onClose();
     } catch (e) {
-      logError("updateLeverage", e);
+      logError("update leverage", e);
       setErr(humanizeError(e));
     } finally {
       setBusy(false);
@@ -368,25 +331,22 @@ export function LeverageModal({ open, onClose, market, current, currentType, onD
     <Modal open={open} onClose={onClose} title={`${market.base} margin & leverage`}>
       <div className="flex flex-col gap-4 text-xs">
         <div className="grid grid-cols-2 gap-1">
-          {(["cross", "isolated"] as const).map((m) => (
-            <button key={m} disabled={m === "cross" && market.isolatedOnly} onClick={() => setMode(m)}
-              className={clsx("py-2 rounded capitalize disabled:opacity-30", mode === m ? "bg-accent/10 text-accent border border-accent/40" : "bg-raised text-muted")}>
-              {m}
+          {([MarginMode.CROSS, MarginMode.ISOLATED] as const).map((m) => (
+            <button key={m} onClick={() => setMode(m)}
+              className={clsx("py-2 rounded capitalize", mode === m ? "bg-accent/10 text-accent border border-accent/40" : "bg-raised text-muted")}>
+              {m.toLowerCase()}
             </button>
           ))}
         </div>
-        {market.isolatedOnly && <p className="text-warn">This market supports isolated margin only.</p>}
         <div>
           <div className="flex justify-between mb-2"><span className="text-muted">Leverage</span><span className="num text-accent text-sm">{lev}x</span></div>
-          <input type="range" min={1} max={market.maxLeverage} step={1} value={lev} onChange={(e) => setLev(Number(e.target.value))} className="w-full" />
-          <div className="flex justify-between text-faint mt-1"><span>1x</span><span>{market.maxLeverage}x max</span></div>
+          <input type="range" min={1} max={Math.max(1, maxLeverage)} step={1} value={lev} onChange={(e) => setLev(Number(e.target.value))} className="w-full" />
+          <div className="flex justify-between text-faint mt-1"><span>1x</span><span>{maxLeverage}x max</span></div>
         </div>
-        {lev >= Math.min(20, market.maxLeverage) && lev > 5 && <p className="text-warn">High leverage increases liquidation risk.</p>}
-        {hasPosition && <p className="text-faint">You have an open position. Hyperliquid may reject lowering leverage or switching margin mode if it would leave the position under-margined.</p>}
+        {lev >= Math.min(20, maxLeverage) && lev > 5 && <p className="text-warn">High leverage increases liquidation risk.</p>}
+        {hasPosition && <p className="text-faint">You have an open position. Orderly may reject a change that would leave it under-margined.</p>}
         {err && <p className="text-short">{err}</p>}
-        <Button variant="accent" onClick={save} disabled={busy || status !== "ready"}>
-          {status !== "ready" ? "Enable trading first" : busy ? "Updating…" : "Confirm"}
-        </Button>
+        <Button variant="accent" onClick={save} disabled={busy}>{busy ? "Updating…" : "Confirm"}</Button>
       </div>
     </Modal>
   );

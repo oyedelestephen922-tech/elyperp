@@ -1,54 +1,31 @@
 import { defineChain, type Chain } from "viem";
 
+// Orderly Network (shared order book). Elyperp runs on Orderly mainnet and
+// takes deposits from Robinhood Chain.
+export const ORDERLY_NETWORK = "mainnet" as const;
+export const ORDERLY_API_URL = "https://api.orderly.org";
 
-export type HlNetwork = "mainnet" | "testnet";
-
-export const HL_NETWORK: HlNetwork =
-  process.env.NEXT_PUBLIC_HL_NETWORK === "mainnet" ? "mainnet" : "testnet";
-
-export const IS_TESTNET = HL_NETWORK === "testnet";
-
-export const HL_API_URL = IS_TESTNET
-  ? "https://api.hyperliquid-testnet.xyz"
-  : "https://api.hyperliquid.xyz";
-
-export const HL_WS_URL = IS_TESTNET
-  ? "wss://api.hyperliquid-testnet.xyz/ws"
-  : "wss://api.hyperliquid.xyz/ws";
-
-export const HL_APP_URL = IS_TESTNET
-  ? "https://app.hyperliquid-testnet.xyz"
-  : "https://app.hyperliquid.xyz";
+// Builder ID from Orderly One (https://dex.orderly.network). Market data works
+// without it; account creation, deposits and trading need it.
+export const BROKER_ID = (process.env.NEXT_PUBLIC_ORDERLY_BROKER_ID || "").trim();
+export const BROKER_NAME = "Elyperp";
+export const TRADING_ENABLED = BROKER_ID.length > 0;
 
 // Robinhood Chain: Arbitrum Orbit L2 on Ethereum, gas in ETH.
-// Mainnet 4663, testnet 46630. Follows the Hyperliquid network unless overridden.
-const RH_MAINNET = {
+export const robinhood: Chain = defineChain({
   id: 4663,
   name: "Robinhood Chain",
-  rpc: "https://rpc.mainnet.chain.robinhood.com",
-  explorer: "https://robinhoodchain.blockscout.com",
-};
-const RH_TESTNET = {
-  id: 46630,
-  name: "Robinhood Chain Testnet",
-  rpc: "https://rpc.testnet.chain.robinhood.com",
-  explorer: "https://explorer.testnet.chain.robinhood.com",
-};
-
-const rhDefault = IS_TESTNET ? RH_TESTNET : RH_MAINNET;
-const rhId = Number(process.env.NEXT_PUBLIC_ROBINHOOD_CHAIN_ID || rhDefault.id);
-const rhBase = rhId === RH_MAINNET.id ? RH_MAINNET : rhId === RH_TESTNET.id ? RH_TESTNET : rhDefault;
-
-export const robinhood: Chain = defineChain({
-  id: rhId,
-  name: process.env.NEXT_PUBLIC_ROBINHOOD_CHAIN_NAME || rhBase.name,
-  testnet: rhId === RH_TESTNET.id,
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: { default: { http: [process.env.NEXT_PUBLIC_ROBINHOOD_RPC_URL || rhBase.rpc] } },
-  blockExplorers: {
-    default: { name: "Blockscout", url: process.env.NEXT_PUBLIC_ROBINHOOD_EXPLORER_URL || rhBase.explorer },
-  },
+  rpcUrls: { default: { http: [process.env.NEXT_PUBLIC_ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com"] } },
+  blockExplorers: { default: { name: "Blockscout", url: "https://robinhoodchain.blockscout.com" } },
 });
+
+// Collateral Orderly accepts from Robinhood Chain (checked against /v1/public/token).
+export const COLLATERAL = {
+  symbol: "USDG",
+  decimals: 6,
+  address: "0x5fc5360d0400a0fd4f2af552add042d716f1d168" as const,
+};
 
 export const WALLETCONNECT_PROJECT_ID = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
@@ -57,10 +34,9 @@ export const DEFAULT_SLIPPAGE = 0.01;
 export const STALE_AFTER_MS = 30_000;
 
 export const LINKS = {
-  hyperliquidDeposit: `${HL_APP_URL}/portfolio`,
-  hyperliquidDocsBridge: "https://hyperliquid.gitbook.io/hyperliquid-docs/onboarding/how-to-start-trading",
-  testnetFaucet: "https://app.hyperliquid-testnet.xyz/drip",
+  orderlyBuilder: "https://dex.orderly.network",
+  orderlyDocs: "https://orderly.network/docs",
   robinhoodDocs: "https://docs.robinhood.com/chain/",
   robinhoodBridging: "https://docs.robinhood.com/chain/bridging/",
-  circleHyperEvmToCore: "https://developers.circle.com/cctp/transfer-usdc-from-hyperevm-to-hypercore",
+  explorer: "https://robinhoodchain.blockscout.com",
 };

@@ -5,34 +5,31 @@ import {
   type IChartApi, type IPriceLine, type ISeriesApi, type UTCTimestamp,
 } from "lightweight-charts";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getInfo, getSubs } from "@/lib/hl/clients";
-import { subscriptionScope } from "@/lib/hl/subscribe";
-import { logError } from "@/lib/hl/errors";
+import { useWS } from "@orderly.network/hooks";
+import { getTimestamp } from "@orderly.network/utils";
+import { logError } from "@/lib/errors";
 import { Spinner } from "@/components/ui/primitives";
 
+// [label, seconds, Orderly /tv/history resolution, live kline topic suffix]
 const INTERVALS = [
-  ["1m", 60], ["5m", 300], ["15m", 900], ["30m", 1800], ["1h", 3600], ["4h", 14400], ["1d", 86400], ["1w", 604800],
+  ["1m", 60, "1", "1m"], ["5m", 300, "5", "5m"], ["15m", 900, "15", "15m"], ["30m", 1800, "30", "30m"],
+  ["1H", 3600, "60", "1h"], ["1D", 86400, "1D", "1d"], ["1W", 604800, "1W", "1w"],
 ] as const;
 type Interval = (typeof INTERVALS)[number][0];
-const LABEL: Record<Interval, string> = { "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1H", "4h": "4H", "1d": "1D", "1w": "1W" };
 
 interface Candle { time: UTCTimestamp; open: number; high: number; low: number; close: number; volume: number }
 export interface ChartLine { price: number; color: string; title: string; dashed?: boolean }
 
-type RawCandle = { t: number; o: string; h: string; l: string; c: string; v: string };
+type RawCandle = { t: number; o: number; h: number; l: number; c: number; v: number };
 const toCandle = (c: RawCandle): Candle => ({
-  time: Math.floor(c.t / 1000) as UTCTimestamp, open: +c.o, high: +c.h, low: +c.l, close: +c.c, volume: +c.v,
+  time: c.t as UTCTimestamp, open: +c.o, high: +c.h, low: +c.l, close: +c.c, volume: +c.v,
 });
 
-async function fetchCandles(coin: string, interval: Interval, startTime: number, endTime?: number): Promise<RawCandle[]> {
-  const qs = new URLSearchParams({ coin, interval, startTime: String(startTime), ...(endTime ? { endTime: String(endTime) } : {}) });
-  try {
-    const r = await fetch(`/api/candles?${qs}`);
-    if (!r.ok) throw new Error(`candles ${r.status}`);
-    return await r.json();
-  } catch {
-    return getInfo().candleSnapshot({ coin, interval, startTime, ...(endTime ? { endTime } : {}) });
-  }
+async function fetchCandles(symbol: string, resolution: string, fromSec: number, toSec: number): Promise<RawCandle[]> {
+  const qs = new URLSearchParams({ symbol, resolution, from: String(Math.floor(fromSec)), to: String(Math.floor(toSec)) });
+  const r = await fetch(`/api/candles?${qs}`);
+  if (!r.ok) throw new Error(`candles ${r.status}`);
+  return r.json();
 }
 
 function sma(data: Candle[], n: number) {
@@ -56,7 +53,8 @@ function ema(data: Candle[], n: number) {
   return out;
 }
 
-export function Chart({ coin, pricePrecision, lines }: { coin: string; pricePrecision: number; lines: ChartLine[] }) {
+export function Chart({ symbol, pricePrecision, lines }: { symbol: string; pricePrecision: number; lines: ChartLine[] }) {
+  const ws = useWS();
   const wrapRef = useRef<HTMLDivElement>(null);
   const elRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -132,7 +130,7 @@ export function Chart({ coin, pricePrecision, lines }: { coin: string; pricePrec
   }, [showVol]);
   useEffect(refreshIndicators, [refreshIndicators]);
 
-  // Load history + live stream whenever coin/interval changes
+  // Load history + live stream whenever the market or interval changes
   useEffect(() => {
     const chart = chartRef.current;
     const series = candleRef.current;
@@ -147,10 +145,11 @@ export function Chart({ coin, pricePrecision, lines }: { coin: string; pricePrec
     vol.setData([]);
     drawingsRef.current.forEach((l) => series.removePriceLine(l));
     drawingsRef.current = [];
-    const secs = INTERVALS.find((i) => i[0] === interval)![1];
+    const [, secs, resolution, klineType] = INTERVALS.find((i) => i[0] === interval)!;
     const volData = (d: Candle[]) => d.map((c) => ({ time: c.time, value: c.volume, color: c.close >= c.open ? "#18d98b55" : "#f2495e55" }));
+    const nowSec = () => Math.floor(Date.now() / 1000);
 
-    fetchCandles(coin, interval, Date.now() - secs * 1000 * 1500)
+    fetchCandles(symbol, resolution, nowSec() - secs * 1500, nowSec() + secs)
       .then((raw) => {
         if (cancelled) return;
         const d = raw.map(toCandle);
@@ -164,7 +163,7 @@ export function Chart({ coin, pricePrecision, lines }: { coin: string; pricePrec
       })
       .catch((e) => {
         logError("candles", e);
-        if (!cancelled) setError("Couldn't load candles from Hyperliquid.");
+        if (!cancelled) setError("Couldn't load candles from Orderly.");
       })
       .finally(() => !cancelled && setLoading(false));
 
@@ -172,8 +171,8 @@ export function Chart({ coin, pricePrecision, lines }: { coin: string; pricePrec
     const onRange = (range: { from: number; to: number } | null) => {
       if (!range || range.from > 10 || loadingOlder.current || exhausted.current || !dataRef.current.length) return;
       loadingOlder.current = true;
-      const oldest = dataRef.current[0].time * 1000;
-      fetchCandles(coin, interval, oldest - secs * 1000 * 1000, oldest - 1)
+      const oldest = dataRef.current[0].time;
+      fetchCandles(symbol, resolution, oldest - secs * 1000, oldest - 1)
         .then((raw) => {
           if (cancelled) return;
           const older = raw.map(toCandle).filter((c) => c.time < dataRef.current[0].time);
@@ -188,27 +187,30 @@ export function Chart({ coin, pricePrecision, lines }: { coin: string; pricePrec
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
 
-    const scope = subscriptionScope();
-    scope.add(
-      getSubs().candle({ coin, interval }, (c) => {
-        if (cancelled) return;
-        const bar = toCandle(c as RawCandle);
-        const d = dataRef.current;
-        const last = d[d.length - 1];
-        if (last && bar.time < last.time) return;
-        if (last && bar.time === last.time) d[d.length - 1] = bar;
-        else d.push(bar);
-        series.update(bar);
-        vol.update({ time: bar.time, value: bar.volume, color: bar.close >= bar.open ? "#18d98b55" : "#f2495e55" });
-      }),
-      `candle ${coin} ${interval}`,
+    // Live candle for the current bucket
+    const topic = `${symbol}@kline_${klineType}`;
+    const unsubscribe = ws.subscribe(
+      { id: topic, event: "subscribe", topic, ts: getTimestamp() },
+      {
+        onMessage: (k: { symbol: string; open: number; high: number; low: number; close: number; volume: number; startTime: number }) => {
+          if (cancelled || k.symbol !== symbol) return;
+          const bar: Candle = { time: Math.floor(k.startTime / 1000) as UTCTimestamp, open: +k.open, high: +k.high, low: +k.low, close: +k.close, volume: +k.volume };
+          const d = dataRef.current;
+          const last = d[d.length - 1];
+          if (last && bar.time < last.time) return;
+          if (last && bar.time === last.time) d[d.length - 1] = bar;
+          else d.push(bar);
+          series.update(bar);
+          vol.update({ time: bar.time, value: bar.volume, color: bar.close >= bar.open ? "#18d98b55" : "#f2495e55" });
+        },
+      },
     );
     return () => {
       cancelled = true;
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
-      scope.close();
+      unsubscribe?.();
     };
-  }, [coin, interval, refreshIndicators]);
+  }, [symbol, interval, refreshIndicators, ws]);
 
   // Position / order overlays
   useEffect(() => {
@@ -233,7 +235,7 @@ export function Chart({ coin, pricePrecision, lines }: { coin: string; pricePrec
         {INTERVALS.map(([iv]) => (
           <button key={iv} onClick={() => setIntervalState(iv)}
             className={clsx("px-2 py-1 rounded", interval === iv ? "text-accent bg-accent/10" : "text-muted hover:text-fg")}>
-            {LABEL[iv]}
+            {iv}
           </button>
         ))}
         <span className="mx-1 h-4 w-px bg-line-2" />

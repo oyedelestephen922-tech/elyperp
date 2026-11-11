@@ -1,12 +1,12 @@
 # Elyperp
 
-Perps exchange frontend for the Robinhood Chain ecosystem. Orders execute on Hyperliquid (HyperCore): crypto perps plus stock, index, commodity and FX perps from HIP-3 builder dexes.
+Perpetuals exchange front end on Robinhood Chain. Orders execute on Orderly Network's shared order book: crypto perps plus US stock, index, commodity and FX perps. Collateral is USDG deposited from Robinhood Chain.
 
-Non-custodial. No backend secrets. Orders are signed in the browser and sent straight to Hyperliquid.
+Non-custodial. No backend secrets. Funds sit in Orderly's vault contract, and orders are signed in the browser and sent straight to Orderly.
 
 ## Stack
 
-Next.js 15, TypeScript, Tailwind 4, wagmi 3 / viem, [@nktkas/hyperliquid](https://github.com/nktkas/hyperliquid), TradingView Lightweight Charts, zustand, vitest.
+Next.js 15, TypeScript, Tailwind 4, wagmi 3 / viem, Orderly SDK (`@orderly.network/hooks`, `core`, `default-evm-adapter`), TradingView Lightweight Charts, zustand, vitest.
 
 ## Setup
 
@@ -22,7 +22,7 @@ Other scripts:
 
 ```bash
 npm test                        # unit tests
-npm run live-check testnet      # read-only check against the live API (or mainnet)
+npm run live-check              # read-only checks against Orderly's live API and Robinhood Chain
 npm run build && npm start
 ```
 
@@ -30,62 +30,55 @@ npm run build && npm start
 
 | Var | Default | |
 |---|---|---|
-| `NEXT_PUBLIC_HL_NETWORK` | `testnet` | `testnet` or `mainnet` |
-| `NEXT_PUBLIC_ROBINHOOD_CHAIN_ID` | follows HL network | `4663` mainnet, `46630` testnet |
-| `NEXT_PUBLIC_ROBINHOOD_CHAIN_NAME` | `Robinhood Chain` / `Robinhood Chain Testnet` | |
-| `NEXT_PUBLIC_ROBINHOOD_RPC_URL` | public Robinhood RPC | rate-limited; use a provider key for heavy traffic |
-| `NEXT_PUBLIC_ROBINHOOD_EXPLORER_URL` | Blockscout | |
+| `NEXT_PUBLIC_ORDERLY_BROKER_ID` | empty | Builder ID from Orderly One. Without it the site shows live markets but accounts and trading stay off. |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | empty | WalletConnect is off unless set |
-| `TESTNET_PRIVATE_KEY` | | only for `scripts/testnet-trade.ts` |
+| `NEXT_PUBLIC_ROBINHOOD_RPC_URL` | public Robinhood RPC | rate-limited; use a provider key for heavy traffic |
 
-Robinhood Chain is Robinhood's Arbitrum Orbit L2 on Ethereum (gas in ETH). With `NEXT_PUBLIC_HL_NETWORK=mainnet` the app uses Robinhood Chain mainnet (4663); on testnet it uses Robinhood Chain Testnet (46630).
+### Getting a builder ID
+
+1. Go to https://dex.orderly.network and connect a wallet.
+2. Create a builder profile and set the fee model.
+3. Pay the one-time setup fee and register the admin account.
+4. Put the ID in `NEXT_PUBLIC_ORDERLY_BROKER_ID` (Vercel: all environments) and redeploy.
+
+## Network
+
+| | |
+|---|---|
+| Chain | Robinhood Chain (Arbitrum Orbit L2 on Ethereum), chain ID `4663`, gas in ETH |
+| RPC | `https://rpc.mainnet.chain.robinhood.com` |
+| Explorer | `https://robinhoodchain.blockscout.com` |
+| Collateral | USDG `0x5fc5360d0400a0fd4f2af552add042d716f1d168` (6 decimals) |
+| Orderly vault on Robinhood Chain | `0x816f722424b49cf1275cc86da9840fbd5a6167e9` |
+| Orderly API | `https://api.orderly.org`, WebSocket `wss://ws-evm.orderly.org` |
+
+The chain ID, USDG address and vault come from Orderly's `/v1/public/chain_info` and `/v1/public/token`; `npm run live-check` re-verifies them.
 
 ## How it works
 
-- **Markets.** `perpDexs`, `allPerpMetas`, `perpCategories`, `spotMeta`, plus one `allDexsAssetCtxs` websocket snapshot. That's a fixed number of calls no matter how many dexes exist (testnet has ~280). The list refreshes every 5 min, so new listings show up on their own. HIP-3 asset id = `100000 + dexIndex * 10000 + index`.
-- **Prices.** The all-dex stream pushes every ~12s; the market you're on also uses `activeAssetCtx` (~1s). If nothing arrives for 30s, prices are marked stale.
-- **Account.** `allDexsClearinghouseState`, `orderUpdates` and `userFills` over websocket, with http polling as a fallback.
-- **Signing.** The wallet signs `approveAgent` once for a key generated in the browser. That key signs orders and can't withdraw. No seed phrase or private key is ever asked for.
-- **Orders.** Market (IOC with a slippage cap), limit (GTC/IOC/ALO), reduce-only, TP/SL on entry or on an open position, full or partial close, cancel, leverage, and cross/isolated. Each leg shows the exchange's actual status, so a rejected order never shows as filled.
-- **Checks before sending.** Lot and tick rounding, $10 minimum, leverage cap, max size from `activeAssetData`, TP/SL direction, inactive markets, and a lock against double submits.
+- **Markets.** `/api/markets` combines `/v1/public/info` (parameters), `/v1/public/futures` (prices, funding, OI) and `/v1/public/rwa/info` (trading sessions), cached briefly on the server. The client refreshes it every minute and streams `tickers` and `markprices` over WebSocket.
+- **URLs.** `/trade/BTC`. A market listed by another builder on Orderly gets `-builder` on the end (`/trade/NVDA-mythos`) when Orderly also lists that ticker.
+- **Charts.** History from Orderly's `/tv/history` (through `/api/candles`), live bar from the `SYMBOL@kline_*` stream.
+- **Account.** The wagmi wallet is handed to Orderly's account object (`account.setAddress`), exactly like Orderly's own connector. Setup is two signatures: register the account under Elyperp's builder ID, then add an Ed25519 trading key that lives in the browser. The key can trade but not withdraw.
+- **Orders.** `useOrderEntry` from Orderly's SDK: market, limit (GTC, IOC, FOK, post-only), reduce-only, TP/SL on entry, plus Orderly's own validation (min notional, ticks, price range, max size) and estimates (liquidation price, slippage, leverage).
+- **Positions.** `usePositionStream`, close and partial close with `usePositionClose`, position TP/SL with `useTPSLOrder`, open orders and cancel with `useOrderStream`.
+- **Funds.** `useDeposit` / `useWithdraw` for USDG on Robinhood Chain.
 
-API routes: `/api/markets` (discovery; serves the last result instantly and refreshes in the background), `/api/candles`, `/api/health`.
-
-## Wallet / Robinhood Chain
-
-Add Robinhood Chain to MetaMask or Rabby (chain 4663, ETH, `https://rpc.mainnet.chain.robinhood.com`, explorer `https://robinhoodchain.blockscout.com`). Testnet is chain 46630 with `https://rpc.testnet.chain.robinhood.com`. The app also offers to switch or add it. Your EVM address is your Hyperliquid account.
-
-## Funding the account
-
-Connecting a wallet doesn't move any money. Ways to get USDC onto HyperCore:
-
-- Arbitrum USDC through the Hyperliquid bridge (min 5 USDC)
-- HyperEVM USDC through Circle's `CoreDepositWallet.deposit(amount, 0)`
-- Robinhood Chain → Arbitrum with a route Robinhood lists (Across, Relay, LI.FI/Jumper; see https://docs.robinhood.com/chain/bridging/), then the Arbitrum route above
-
-There's no direct Robinhood Chain → HyperCore deposit, so it isn't wired in. If one is published, add it in `OnboardingModal.tsx`.
-
-The setup dialog also handles moving spot USDC to perps, approving the trading key, and turning on HIP-3 dex abstraction.
+API routes: `/api/markets`, `/api/candles`, `/api/health`.
 
 ## Testing
 
-- `npm test`: discovery against stubbed API responses, rounding, liquidation math, order validation, status mapping, and agent signature recovery.
-- `npm run live-check mainnet|testnet`: discovery, asset ids, candles vs mark, book, websocket streams, and checks that a bad signature is rejected. Last run (Nov 8 2026): mainnet 560 markets / 11 dexes, testnet 1007 / 278, all passing.
-- `TESTNET_PRIVATE_KEY=0x... npx tsx scripts/testnet-trade.ts --with-fill`: resting order, cancel, a too-small order getting rejected, then opening and closing a position. Testnet funds: https://app.hyperliquid-testnet.xyz/drip
+- `npm test`: symbol parsing, slugs, categories, decimals, sessions and formatting against trimmed real API responses.
+- `npm run live-check`: market list, Robinhood Chain support and USDG address on Orderly, candles vs mark, system status, Robinhood RPC, and the order book, kline and mark-price streams.
 
 ## Deploy (Vercel)
 
-```bash
-npx vercel link
-npx vercel --prod
-```
-
-Set the env vars in the Vercel project. The install command is `npm install` (`.npmrc` already sets `legacy-peer-deps`). Check `/api/health` after deploying.
+The repo is connected to the Vercel project, so pushing to `main` deploys. Set the env vars in the project and check `/api/health` afterwards.
 
 ## Known gaps
 
 - Lightweight Charts only allows horizontal-line drawings; full drawing tools need TradingView's licensed Advanced Charts.
-- Pre-trade liquidation price is an estimate. Open positions use Hyperliquid's number.
-- The US session indicator ignores exchange holidays.
-- HIP-3 dexes with non-USDC collateral (USDH, USDE, etc.) need that token in the account.
-- The rate limiter on the API routes is in-memory, so it's per instance. Use Redis/Upstash if you need a global limit.
+- Pre-trade liquidation price is an estimate. Open positions use Orderly's number.
+- Deposits and withdrawals are USDG on Robinhood Chain only.
+- Orderly's SDK is large, so the trade page's first load is around 830 KB of JavaScript.
+- The rate limiter on the API routes is in-memory, so it's per instance.

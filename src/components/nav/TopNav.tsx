@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { Logo } from "@/components/ui/primitives";
 import { WalletButton } from "./WalletButton";
-import { IS_TESTNET } from "@/lib/config";
 
 const LINKS = [
   { href: "/trade/BTC", match: "/trade", label: "Trade" },
@@ -20,11 +19,6 @@ export function TopNav() {
   const [open, setOpen] = useState(false);
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-bg/95 backdrop-blur">
-      {IS_TESTNET && (
-        <div className="bg-warn/10 text-warn text-[11px] text-center py-1 border-b border-warn/20">
-          Hyperliquid <b>testnet</b>. Test funds only.
-        </div>
-      )}
       <div className="flex items-center h-12 px-3 gap-4">
         <Link href="/trade/BTC" aria-label="Elyperp home"><Logo /></Link>
         <nav className="hidden md:flex items-center gap-1">

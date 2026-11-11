@@ -2,9 +2,8 @@
 import clsx from "clsx";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { CATEGORY_LABEL, type MarketCategory } from "@/lib/hl/classify";
-import { coinToPath, type Market } from "@/lib/hl/markets";
-import { fmtCompact, fmtPct, fmtPx, pnlClass, shortAddr } from "@/lib/format";
+import { CATEGORY_LABEL, type Market, type MarketCategory } from "@/lib/orderly/markets";
+import { change24, fmtCompact, fmtPct, fmtPx, marketPath, pnlClass } from "@/lib/format";
 import { useMarkets, usePrefs } from "@/store/markets";
 import { useIsStale } from "@/hooks/useMarketData";
 import { Badge, Empty, Spinner } from "@/components/ui/primitives";
@@ -16,17 +15,16 @@ const EXTRA: MarketCategory[] = ["commodity", "fx", "other"];
 export default function MarketsPage() {
   const router = useRouter();
   const markets = useMarkets((s) => s.markets);
-  const dexes = useMarkets((s) => s.dexes);
   const loaded = useMarkets((s) => s.loaded);
   const error = useMarkets((s) => s.error);
   const { favorites, toggleFavorite } = usePrefs();
-  const stale = useIsStale("");
+  const stale = useIsStale();
   const [cat, setCat] = useState<MarketCategory | "fav">("crypto");
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<Sort>("volume");
   const [desc, setDesc] = useState(true);
   const [status, setStatus] = useState<"active" | "all">("active");
-  const [dex, setDex] = useState<string>("all");
+  const [source, setSource] = useState<"all" | "orderly" | "builders">("all");
 
   const all = Object.values(markets);
   const counts = useMemo(() => {
@@ -39,19 +37,19 @@ export default function MarketsPage() {
     const ql = q.trim().toLowerCase();
     const val = (m: Market) => {
       const c = m.ctx;
-      if (sort === "volume") return c?.dayNtlVlm ?? -1;
-      if (sort === "change") return c && c.prevDayPx > 0 ? c.markPx / c.prevDayPx - 1 : -Infinity;
+      if (sort === "volume") return c?.amount24 ?? -1;
+      if (sort === "change") return change24(c) ?? -Infinity;
       if (sort === "oi") return c ? c.openInterest * c.markPx : -1;
-      if (sort === "funding") return c?.funding ?? -Infinity;
+      if (sort === "funding") return c?.estFunding ?? -Infinity;
       return 0;
     };
     return all
-      .filter((m) => (cat === "fav" ? favorites.includes(m.coin) : m.category === cat))
+      .filter((m) => (cat === "fav" ? favorites.includes(m.symbol) : m.category === cat))
       .filter((m) => status === "all" || m.status === "active")
-      .filter((m) => dex === "all" || m.dex === dex)
-      .filter((m) => !ql || m.coin.toLowerCase().includes(ql) || m.dexFullName.toLowerCase().includes(ql))
-      .sort((a, b) => (sort === "name" ? a.coin.localeCompare(b.coin) * (desc ? -1 : 1) : (val(b) - val(a)) * (desc ? 1 : -1)));
-  }, [all, cat, favorites, status, dex, q, sort, desc]);
+      .filter((m) => source === "all" || (source === "orderly" ? !m.builder : !!m.builder))
+      .filter((m) => !ql || m.base.toLowerCase().includes(ql) || (m.builder ?? "").toLowerCase().includes(ql))
+      .sort((a, b) => (sort === "name" ? a.base.localeCompare(b.base) * (desc ? -1 : 1) : (val(b) - val(a)) * (desc ? 1 : -1)));
+  }, [all, cat, favorites, status, source, q, sort, desc]);
 
   const header = (k: Sort, label: string, right = true) => (
     <th className={clsx("px-3 py-2 font-normal text-faint cursor-pointer select-none whitespace-nowrap", right ? "text-right" : "text-left")}
@@ -60,19 +58,17 @@ export default function MarketsPage() {
     </th>
   );
 
-  const dexOptions = dexes.filter((d) => (cat === "crypto" ? true : d.name !== "") && d.marketCount > 0);
-
   return (
     <div className="p-3 md:p-5 max-w-7xl w-full mx-auto flex flex-col gap-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Markets</h1>
           <p className="text-xs text-muted mt-1">
-            {loaded ? `${all.length} perpetual markets across ${dexes.length} dexes, discovered live from Hyperliquid.` : "Discovering markets…"}
+            {loaded ? `${all.length} perpetual markets on Orderly's shared order book, updated live.` : "Loading markets…"}
             {loaded && stale && <span className="text-warn"> Live prices paused, showing last snapshot.</span>}
           </p>
         </div>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search ticker or dex"
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search ticker or builder"
           className="w-full sm:w-64 bg-panel border border-line-2 rounded px-3 py-2 text-sm outline-none focus:border-accent/60" />
       </div>
 
@@ -81,13 +77,14 @@ export default function MarketsPage() {
         <CatBtn on={cat === "fav"} onClick={() => setCat("fav")} label="★ Watchlist" n={favorites.length} />
         {EXTRA.filter((c) => counts[c]).map((c) => <CatBtn key={c} on={cat === c} onClick={() => setCat(c)} label={CATEGORY_LABEL[c]} n={counts[c]} subtle />)}
         <div className="flex-1" />
-        <select value={dex} onChange={(e) => setDex(e.target.value)} className="w-44 bg-panel border border-line-2 rounded px-2 py-1.5 text-xs text-muted">
-          <option value="all">All dexes</option>
-          {dexOptions.map((d) => <option key={d.name || "hl"} value={d.name}>{d.fullName}{d.name ? ` (${d.name})` : ""}</option>)}
+        <select value={source} onChange={(e) => setSource(e.target.value as typeof source)} className="bg-panel border border-line-2 rounded px-2 py-1.5 text-xs text-muted">
+          <option value="all">All listings</option>
+          <option value="orderly">Listed by Orderly</option>
+          <option value="builders">Listed by builders</option>
         </select>
         <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className="bg-panel border border-line-2 rounded px-2 py-1.5 text-xs text-muted">
           <option value="active">Active only</option>
-          <option value="all">Include inactive & delisted</option>
+          <option value="all">Include restricted & delisting</option>
         </select>
       </div>
 
@@ -102,32 +99,33 @@ export default function MarketsPage() {
             <thead><tr className="border-b border-line">
               <th className="w-8" />
               {header("name", "Market", false)}
-              <th className="px-3 py-2 font-normal text-faint text-left">Dex</th>
+              <th className="px-3 py-2 font-normal text-faint text-left">Listed by</th>
               <th className="px-3 py-2 font-normal text-faint text-right">Price</th>
               {header("change", "24h change")}
               {header("volume", "24h volume")}
               {header("oi", "Open interest")}
-              {header("funding", "Funding (1h)")}
+              {header("funding", "Funding")}
               <th className="px-3 py-2 font-normal text-faint text-right">Max lev.</th>
               <th className="px-3 py-2 font-normal text-faint text-right">Status</th>
             </tr></thead>
             <tbody>
               {rows.map((m) => {
                 const c = m.ctx;
-                const chg = c && c.prevDayPx > 0 ? c.markPx / c.prevDayPx - 1 : null;
+                const chg = change24(c);
+                const open = m.status !== "inactive";
                 return (
-                  <tr key={m.coin} onClick={() => m.status !== "delisted" && router.push(coinToPath(m.coin))}
-                    className={clsx("border-t border-line", m.status !== "delisted" ? "cursor-pointer hover:bg-panel-2" : "opacity-50")}>
-                    <td className="pl-3"><button onClick={(e) => { e.stopPropagation(); toggleFavorite(m.coin); }} className={favorites.includes(m.coin) ? "text-warn" : "text-faint hover:text-muted"} aria-label="Watchlist">★</button></td>
-                    <td className="px-3 py-2"><span className="font-medium">{m.base}</span><span className="text-faint">-USD</span> <span className="num text-faint text-[10px]">{m.coin !== m.base ? m.coin : ""}</span></td>
-                    <td className="px-3 py-2 text-muted" title={m.dexDeployer ? `Deployer ${m.dexDeployer}` : undefined}>{m.dex ? <>{m.dexFullName} <span className="text-faint">{shortAddr(m.dexDeployer)}</span></> : "Hyperliquid"}</td>
-                    <td className="px-3 py-2 text-right num">{fmtPx(c?.markPx, m.szDecimals)}</td>
+                  <tr key={m.symbol} onClick={() => open && router.push(marketPath(m.slug))}
+                    className={clsx("border-t border-line", open ? "cursor-pointer hover:bg-panel-2" : "opacity-50")}>
+                    <td className="pl-3"><button onClick={(e) => { e.stopPropagation(); toggleFavorite(m.symbol); }} className={favorites.includes(m.symbol) ? "text-warn" : "text-faint hover:text-muted"} aria-label="Watchlist">★</button></td>
+                    <td className="px-3 py-2"><span className="font-medium">{m.base}</span><span className="text-faint">-PERP</span></td>
+                    <td className="px-3 py-2 text-muted">{m.builder ?? "Orderly"}</td>
+                    <td className="px-3 py-2 text-right num">{fmtPx(c?.markPx || null, m.pxDecimals)}</td>
                     <td className={clsx("px-3 py-2 text-right num", pnlClass(chg))}>{fmtPct(chg)}</td>
-                    <td className="px-3 py-2 text-right num">{fmtCompact(c?.dayNtlVlm)}</td>
-                    <td className="px-3 py-2 text-right num">{c ? fmtCompact(c.openInterest * c.markPx) : "--"}</td>
-                    <td className={clsx("px-3 py-2 text-right num", "text-fg")}>{c ? (c.funding * 100).toFixed(4) + "%" : "--"}</td>
-                    <td className="px-3 py-2 text-right num">{m.maxLeverage}x{m.isolatedOnly && <span className="text-faint"> iso</span>}</td>
-                    <td className="px-3 py-2 text-right"><Badge tone={m.status === "active" ? "accent" : m.status === "delisted" ? "short" : "warn"}>{m.status}</Badge></td>
+                    <td className="px-3 py-2 text-right num">{fmtCompact(c?.amount24)}</td>
+                    <td className="px-3 py-2 text-right num">{c && c.openInterest > 0 ? fmtCompact(c.openInterest * c.markPx) : "--"}</td>
+                    <td className="px-3 py-2 text-right num text-fg" title={`Per ${m.fundingPeriodH}h period`}>{c ? (c.estFunding * 100).toFixed(4) + "%" : "--"} <span className="text-faint">{m.fundingPeriodH}h</span></td>
+                    <td className="px-3 py-2 text-right num">{m.maxLeverage}x</td>
+                    <td className="px-3 py-2 text-right"><Badge tone={m.status === "active" ? "accent" : m.status === "delisting" || m.status === "inactive" ? "short" : "warn"}>{m.status.replace("_", " ")}</Badge></td>
                   </tr>
                 );
               })}

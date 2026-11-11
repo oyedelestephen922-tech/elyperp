@@ -1,6 +1,6 @@
 "use client";
 import { create } from "zustand";
-import type { TxState } from "@/lib/hl/trade";
+export type TxState = "pending" | "submitted" | "open" | "filled" | "partial" | "cancelled" | "rejected" | "failed";
 
 export interface Toast {
   id: string;

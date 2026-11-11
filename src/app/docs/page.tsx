@@ -1,4 +1,4 @@
-import { robinhood, HL_NETWORK, LINKS } from "@/lib/config";
+import { COLLATERAL, LINKS, robinhood } from "@/lib/config";
 
 export const metadata = { title: "Docs | Elyperp" };
 
@@ -11,7 +11,7 @@ const S = ({ id, title, children }: { id: string; title: string; children: React
 
 export default function DocsPage() {
   const toc = [
-    ["architecture", "How Elyperp works"], ["onboarding", "Getting started"], ["markets", "Markets"],
+    ["architecture", "How Elyperp works"], ["onboarding", "Getting started"], ["funds", "Deposits & withdrawals"], ["markets", "Markets"],
     ["orders", "Orders"], ["risk", "Margin, liquidation & funding"], ["security", "Security"], ["limits", "Known limitations"],
   ];
   return (
@@ -22,65 +22,65 @@ export default function DocsPage() {
       <div className="flex flex-col gap-8">
         <div>
           <h1 className="text-2xl font-semibold">Documentation</h1>
-          <p className="text-sm text-muted mt-1">Running on Hyperliquid <b className="text-fg">{HL_NETWORK}</b> · {robinhood.name} chain ID {robinhood.id}</p>
+          <p className="text-sm text-muted mt-1">{robinhood.name} · chain ID {robinhood.id} · collateral {COLLATERAL.symbol}</p>
         </div>
 
         <S id="architecture" title="How Elyperp works">
-          <p><b className="text-fg">Execution</b> happens on Hyperliquid&apos;s HyperCore order books. Elyperp never holds your funds. Orders are signed in your browser and sent straight to Hyperliquid.</p>
-          <p><b className="text-fg">Robinhood Chain</b> is Robinhood&apos;s Arbitrum Orbit Layer 2 on Ethereum and uses ETH for gas. Elyperp connects EVM wallets on Robinhood Chain, and your same EVM address is your Hyperliquid account.</p>
-          <p><b className="text-fg">Market data</b> (all markets, prices, order books, trades, candles, funding and open interest) streams live from Hyperliquid. Market discovery runs through Elyperp&apos;s backend with short caching. Prices are flagged stale whenever the live feed stops.</p>
+          <p><b className="text-fg">{robinhood.name}</b> is Robinhood&apos;s Arbitrum Orbit Layer 2 on Ethereum and uses ETH for gas. You connect your EVM wallet on {robinhood.name}, and that address is your Elyperp account.</p>
+          <p><b className="text-fg">Execution</b> happens on Orderly Network&apos;s shared central limit order book. Elyperp is a non-custodial front end: your collateral sits in Orderly&apos;s vault contract, never with Elyperp, and orders go straight from your browser to Orderly.</p>
+          <p><b className="text-fg">Market data</b> (prices, order books, trades, candles, funding and open interest) streams live from Orderly. The market list refreshes every minute, so new listings show up on their own. Prices are flagged stale whenever the live feed stops.</p>
         </S>
 
         <S id="onboarding" title="Getting started">
           <ol className="list-decimal pl-5 flex flex-col gap-1.5">
-            <li>Connect MetaMask, Rabby or another EVM wallet (WalletConnect when configured). Switch to Robinhood Chain when prompted.</li>
-            <li>Fund your Hyperliquid account with USDC. Connecting a wallet does not create an account by itself. Supported routes:
-              <ul className="list-disc pl-5 mt-1">
-                <li><a className="text-accent" href={LINKS.hyperliquidDeposit} target="_blank" rel="noreferrer">Arbitrum USDC → Hyperliquid bridge</a> (minimum 5 USDC).</li>
-                <li><a className="text-accent" href={LINKS.circleHyperEvmToCore} target="_blank" rel="noreferrer">HyperEVM USDC → HyperCore</a> through Circle&apos;s CoreDepositWallet.</li>
-                <li>From Robinhood Chain: bridge USDC to Arbitrum with one of the <a className="text-accent" href={LINKS.robinhoodBridging} target="_blank" rel="noreferrer">routes Robinhood lists</a> (Across, Relay, LI.FI/Jumper), then use the Arbitrum route above.</li>
-              </ul>
-            </li>
-            <li>Click <b className="text-fg">Enable trading</b> and sign once. This approves a browser-generated trading key that can place and cancel orders but cannot withdraw.</li>
-            <li>Optional: enable HIP-3 dex abstraction so stock and index markets can use your main USDC balance.</li>
+            <li>Connect MetaMask, Rabby or another EVM wallet (or WalletConnect) and switch to {robinhood.name} when prompted.</li>
+            <li><b className="text-fg">Create account</b>: sign one message to register your address with Elyperp on Orderly. It&apos;s free and sends no transaction.</li>
+            <li><b className="text-fg">Enable trading</b>: sign once to create a trading key in your browser. It can place and cancel orders but cannot withdraw. It lasts up to a year.</li>
+            <li>Deposit {COLLATERAL.symbol} from {robinhood.name}, then trade.</li>
           </ol>
         </S>
 
+        <S id="funds" title="Deposits & withdrawals">
+          <p>Collateral is <b className="text-fg">{COLLATERAL.symbol}</b> on {robinhood.name} (token <span className="num text-fg break-all">{COLLATERAL.address}</span>). Depositing is two wallet transactions the first time (approve, then deposit), with a small network fee in ETH. Deposits are credited once Orderly confirms them.</p>
+          <p>Withdrawals go back to your connected address on {robinhood.name}. Orderly charges a small withdrawal fee in {COLLATERAL.symbol}. The Withdraw tab shows exactly how much you can withdraw right now.</p>
+          <p>Need {COLLATERAL.symbol} on {robinhood.name}? Use one of the bridges Robinhood lists in its <a className="text-accent" href={LINKS.robinhoodBridging} target="_blank" rel="noreferrer">bridging guide</a>.</p>
+        </S>
+
         <S id="markets" title="Markets">
-          <p>The market list isn&apos;t hardcoded. Elyperp pulls every dex from <code>perpDexs</code> and <code>allPerpMetas</code> and refreshes every 5 minutes, so new listings show up on their own. Categories come from Hyperliquid&apos;s <code>perpCategories</code>; anything it can&apos;t place goes under &quot;Other HIP-3&quot;.</p>
-          <p><b className="text-fg">Stocks and indices</b> are HIP-3 builder-deployed perpetuals. They are always shown with their dex namespace (for example <code>xyz:NVDA</code>), because two dexes can list the same ticker with different oracles, collateral and fees. The deployer controls the oracle, off-hours pricing and any halts. The market bar shows the deployer, the collateral token and the US session status.</p>
-          <p>Markets that are delisted, or that have no valid mark/oracle price, are labelled and cannot be traded.</p>
+          <p>Elyperp shows every market on Orderly&apos;s order book: crypto, US stocks, indices, commodities and FX. Most are listed by Orderly itself. Some are listed by other builders on Orderly; those show the builder&apos;s name next to the ticker, and that builder sets the market&apos;s oracle and parameters.</p>
+          <p><b className="text-fg">Real-world-asset markets</b> (stocks, indices, commodities, FX) follow the underlying market&apos;s trading session. The market bar shows whether the session is open and when it next opens or closes. Outside the session, orders may be rejected and prices can gap at the open.</p>
+          <p>Markets in reduce-only, post-only or delisting status are labelled; inactive markets can&apos;t be traded.</p>
         </S>
 
         <S id="orders" title="Orders">
           <ul className="list-disc pl-5 flex flex-col gap-1">
-            <li><b className="text-fg">Market</b>: an immediate-or-cancel limit order at mid ± your slippage tolerance. Any part that cannot fill inside that band is cancelled and reported as partially filled.</li>
-            <li><b className="text-fg">Limit</b>: GTC, IOC or post-only (ALO).</li>
+            <li><b className="text-fg">Market</b>: fills immediately against the book. The order form shows the estimated slippage before you send it.</li>
+            <li><b className="text-fg">Limit</b>: GTC, IOC, FOK or post-only.</li>
             <li><b className="text-fg">Reduce-only</b>: can only shrink an existing position.</li>
-            <li><b className="text-fg">Take-profit / Stop-loss</b>: trigger orders that execute as reduce-only market orders. They can be attached to a new order or set on an open position.</li>
+            <li><b className="text-fg">Take-profit / Stop-loss</b>: trigger on the mark price. They can be attached to a new order or set on an open position, where they close the whole position.</li>
             <li><b className="text-fg">Close / partial close</b>: reduce-only orders for 1–100% of a position, at market or at a limit price.</li>
           </ul>
-          <p>Sizes are rounded down to each market&apos;s lot size, and prices are checked against Hyperliquid&apos;s tick rules (5 significant figures, at most 6 − szDecimals decimals) before signing. Every order shows the exchange&apos;s real response: open, filled, partially filled, rejected (with the reason) or failed.</p>
+          <p>Sizes and prices are checked against each market&apos;s minimum order value, size step, price tick and allowed price range before signing. Every order shows Orderly&apos;s real response.</p>
         </S>
 
         <S id="risk" title="Margin, liquidation & funding">
-          <p>Leverage and margin mode (cross/isolated) are set per market on your Hyperliquid account. Some HIP-3 markets are isolated-only. The liquidation price shown before you trade is an estimate based on base-tier maintenance margin (half the initial margin at max leverage). Larger positions can hit higher maintenance tiers. Once a position is open, Elyperp shows Hyperliquid&apos;s own liquidation price.</p>
-          <p>Funding is paid hourly. The header shows the current hourly rate and a countdown to the next payment.</p>
+          <p>Leverage and margin mode (cross or isolated) are set per market on your account. The liquidation price shown before you trade is an estimate; once a position is open, Elyperp shows Orderly&apos;s own figure, and the position row warns you when the mark price gets within 5% of it.</p>
+          <p>Funding is exchanged between longs and shorts at the end of each market&apos;s funding period (it varies by market and is shown in the market bar). The header shows the estimated rate and a countdown to the next payment.</p>
         </S>
 
         <S id="security" title="Security">
           <ul className="list-disc pl-5 flex flex-col gap-1">
             <li>Elyperp never asks for your seed phrase or private key.</li>
-            <li>The trading key is generated in your browser and stored in this browser&apos;s local storage. It cannot withdraw funds. Revoke it from the wallet menu, or by approving a new key.</li>
+            <li>The trading key is generated in your browser and stored in this browser&apos;s local storage. It cannot withdraw funds; withdrawals always need a signature from your wallet. Forget it from the wallet menu at any time.</li>
             <li>No API secrets are needed. All configuration is public (<code>NEXT_PUBLIC_*</code>).</li>
           </ul>
         </S>
 
         <S id="limits" title="Known limitations">
           <ul className="list-disc pl-5 flex flex-col gap-1">
-            <li>There is no in-app Robinhood Chain → Hyperliquid bridge yet; see Getting started for the supported routes.</li>
-            <li>Charts use TradingView Lightweight Charts. Drawing tools are limited to horizontal price lines; the full Advanced Charts library needs a TradingView license.</li>
-            <li>HIP-3 dexes that use a non-USDC collateral token need that token in your account.</li>
+            <li>Deposits and withdrawals are {COLLATERAL.symbol} on {robinhood.name} only. Other assets need to be bridged and swapped first.</li>
+            <li>Charts use TradingView Lightweight Charts. Drawing tools are limited to horizontal price lines.</li>
+            <li>Builder-listed markets depend on the listing builder&apos;s settings, which Elyperp doesn&apos;t control.</li>
           </ul>
         </S>
       </div>

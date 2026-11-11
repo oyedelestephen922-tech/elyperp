@@ -1,28 +1,42 @@
 "use client";
 import { useMemo, useState } from "react";
-import { useConnection } from "wagmi";
-import { useAccountStore } from "@/store/account";
-import { Empty, Tabs } from "@/components/ui/primitives";
-import { FillsTable, FundingTable } from "@/components/trade/AccountTabs";
+import { usePrivateQuery } from "@orderly.network/hooks";
+import { openConnect, openOnboard, useAccountStage } from "@/lib/orderly/account";
+import { useMarkets } from "@/store/markets";
+import { Button, Empty, Spinner, Tabs } from "@/components/ui/primitives";
+import { FundingTable, TradesTable } from "@/components/trade/AccountTabs";
+
+interface TradeRow {
+  id: number; symbol: string; side: string; executed_price: number; executed_quantity: number; executed_timestamp: number;
+  fee: number; fee_asset?: string; realized_pnl?: number | null; order_id?: number;
+}
 
 export default function HistoryPage() {
-  const { isConnected } = useConnection();
-  const fills = useAccountStore((s) => s.fills);
+  const { stage } = useAccountStage();
+  if (stage === "unavailable") return <div className="p-6"><Empty>Trading opens soon. Your trade history will show here.</Empty></div>;
+  if (stage === "disconnected") return <div className="p-6 flex flex-col items-center gap-3"><Empty>Connect a wallet to view your trade history.</Empty><Button variant="accent" onClick={openConnect}>Connect wallet</Button></div>;
+  if (stage === "checking") return <div className="p-6 grid place-items-center"><Spinner /></div>;
+  if (stage !== "ready") return <div className="p-6 flex flex-col items-center gap-3"><Empty>Finish account setup to see your history.</Empty><Button variant="accent" onClick={openOnboard}>Account setup</Button></div>;
+  return <History />;
+}
+
+function History() {
+  const markets = useMarkets((s) => s.markets);
+  const slugs = useMarkets((s) => s.slugs);
   const [tab, setTab] = useState<"fills" | "funding">("fills");
   const [q, setQ] = useState("");
-  const [dir, setDir] = useState<"all" | "open" | "close">("all");
-
-  const filtered = useMemo(() => {
-    const ql = q.trim().toLowerCase();
-    return fills
-      .filter((f) => !ql || f.coin.toLowerCase().includes(ql))
-      .filter((f) => dir === "all" || f.dir.toLowerCase().startsWith(dir));
-  }, [fills, q, dir]);
+  const symbol = q.trim() ? slugs[q.trim().toLowerCase()] : undefined;
+  const qs = new URLSearchParams({ size: "500", ...(symbol ? { symbol } : {}) });
+  const { data } = usePrivateQuery<TradeRow[]>(`/v1/trades?${qs}`, { revalidateOnFocus: false });
+  const rows = useMemo(() => [...(data ?? [])].sort((a, b) => b.executed_timestamp - a.executed_timestamp), [data]);
 
   const exportCsv = () => {
-    const rows = [["time", "coin", "dir", "side", "px", "sz", "fee", "closedPnl", "oid", "hash"]];
-    filtered.forEach((f) => rows.push([new Date(f.time).toISOString(), f.coin, f.dir, f.side, f.px, f.sz, String((f as { fee?: string }).fee ?? ""), f.closedPnl, String(f.oid), f.hash]));
-    const blob = new Blob([rows.map((r) => r.join(",")).join("\n")], { type: "text/csv" });
+    const out = [["time", "market", "side", "price", "size", "fee", "fee_asset", "realized_pnl", "order_id", "trade_id"]];
+    rows.forEach((f) => out.push([
+      new Date(f.executed_timestamp).toISOString(), markets[f.symbol]?.base ?? f.symbol, f.side, String(f.executed_price), String(f.executed_quantity),
+      String(f.fee), f.fee_asset ?? "", f.realized_pnl == null ? "" : String(f.realized_pnl), String(f.order_id ?? ""), String(f.id),
+    ]));
+    const blob = new Blob([out.map((r) => r.join(",")).join("\n")], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = "elyperp-trades.csv";
@@ -30,28 +44,21 @@ export default function HistoryPage() {
     URL.revokeObjectURL(a.href);
   };
 
-  if (!isConnected) return <div className="p-6"><Empty>Connect a wallet to view your trade history.</Empty></div>;
-
   return (
     <div className="p-3 md:p-5 max-w-7xl w-full mx-auto flex flex-col gap-4">
       <h1 className="text-xl font-semibold">Trade History</h1>
       <div className="panel">
         <div className="flex flex-wrap items-center gap-2 border-b border-line pr-2">
-          <Tabs value={tab} onChange={setTab} className="px-1" items={[{ value: "fills", label: `Fills (${fills.length})` }, { value: "funding", label: "Funding (7d)" }]} />
+          <Tabs value={tab} onChange={setTab} className="px-1" items={[{ value: "fills", label: "Fills" }, { value: "funding", label: "Funding" }]} />
           <div className="flex-1" />
-          {tab === "fills" && (
-            <>
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter market" className="bg-panel-2 border border-line-2 rounded px-2 py-1 text-xs outline-none" />
-              <select value={dir} onChange={(e) => setDir(e.target.value as typeof dir)} className="bg-panel-2 border border-line-2 rounded px-2 py-1 text-xs text-muted">
-                <option value="all">All</option><option value="open">Opens</option><option value="close">Closes</option>
-              </select>
-              <button onClick={exportCsv} className="text-xs text-accent px-2 py-1" disabled={!filtered.length}>Export CSV</button>
-            </>
-          )}
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Market (e.g. BTC)" className="bg-panel-2 border border-line-2 rounded px-2 py-1 text-xs outline-none" />
+          {tab === "fills" && <button onClick={exportCsv} className="text-xs text-accent px-2 py-1" disabled={!rows.length}>Export CSV</button>}
         </div>
-        <div className="overflow-x-auto scroll-thin">{tab === "fills" ? <FillsTable fills={filtered} /> : <FundingTable />}</div>
+        <div className="overflow-x-auto scroll-thin">
+          {q.trim() && !symbol ? <Empty>No market called “{q.trim()}”.</Empty> : tab === "fills" ? <TradesTable symbol={symbol} limit={500} /> : <FundingTable symbol={symbol} />}
+        </div>
       </div>
-      <p className="text-[11px] text-faint">Shows your 500 most recent fills from Hyperliquid&apos;s userFills endpoint, updated live as new fills stream in.</p>
+      <p className="text-[11px] text-faint">Shows up to your 500 most recent fills from Orderly.</p>
     </div>
   );
 }
