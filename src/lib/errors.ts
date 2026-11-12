@@ -1,27 +1,25 @@
 export function humanizeError(e: unknown): string {
   const raw = extractMessage(e);
   const m = raw.toLowerCase();
+  const code = e && typeof e === "object" && "code" in e ? Number((e as { code: unknown }).code) : NaN;
   if (m.includes("user rejected") || m.includes("user denied") || m.includes("rejected the request") || m.includes("action_rejected"))
     return "You rejected the request in your wallet.";
-  if (m.includes("brokerid") || m.includes("broker_id") || m.includes("broker id"))
-    return "Elyperp's Orderly builder ID isn't set up yet, so accounts can't be created.";
-  if (m.includes("account") && (m.includes("not exist") || m.includes("not registered") || m.includes("not found")))
-    return "This wallet has no Elyperp account yet. Create one in Account setup.";
-  if (m.includes("orderly key") || m.includes("orderly-key") || (m.includes("signature") && m.includes("invalid")))
-    return "Your trading key is no longer valid. Enable trading again to create a new one.";
-  if (m.includes("insufficient") || m.includes("free collateral"))
-    return "Not enough free collateral for this order.";
-  if (m.includes("min_notional") || m.includes("min notional") || m.includes("minimum notional"))
-    return "Order is below this market's minimum order value.";
-  if (m.includes("quote_tick") || m.includes("price tick") || m.includes("tick size")) return "Price is not a valid tick for this market.";
-  if (m.includes("base_tick") || (m.includes("quantity") && m.includes("tick"))) return "Size is not a valid step for this market.";
-  if (m.includes("reduce only") || m.includes("reduce_only")) return "Reduce-only order would increase your position.";
-  if (m.includes("price range") || m.includes("price_range") || m.includes("price scope"))
-    return "Price is too far from the mark price for this market.";
-  if (m.includes("market is closed") || m.includes("market closed") || m.includes("not open"))
-    return "This market is closed right now. Check its trading session.";
-  if (m.includes("rate limit")) return "Too many requests. Wait a moment and retry.";
-  if (m.includes("failed to fetch") || m.includes("network")) return "Network error reaching Orderly. Check your connection.";
+  if (code === 20558 || m.includes("restricted jurisdiction"))
+    return "Lighter doesn't accept orders from your region. Market data stays available.";
+  if (m.includes("api key") || m.includes("pubkey") || m.includes("public key") || (m.includes("signature") && m.includes("invalid")))
+    return "Your trading key isn't valid any more. Set up trading again in Account setup.";
+  if (m.includes("nonce")) return "Lighter rejected the order sequence number. Try again.";
+  if (m.includes("not enough") || m.includes("insufficient") || m.includes("margin"))
+    return "Not enough available margin for this order.";
+  if (m.includes("min") && (m.includes("amount") || m.includes("size") || m.includes("quote")))
+    return "Order is below this market's minimum size or value.";
+  if (m.includes("reduce only") || m.includes("reduce-only") || m.includes("reduceonly")) return "Reduce-only order would increase your position.";
+  if (m.includes("price") && (m.includes("band") || m.includes("range") || m.includes("too far") || m.includes("slippage")))
+    return "Price is too far from the market. Adjust the price or slippage.";
+  if (m.includes("post only") || m.includes("post-only")) return "Post-only order would have matched immediately, so it was cancelled.";
+  if (m.includes("rate limit") || m.includes("too many")) return "Too many requests. Wait a moment and retry.";
+  if (m.includes("failed to fetch") || m.includes("network") || m.includes("timeout") || m.includes("aborted"))
+    return "Network error reaching Lighter. Check your connection.";
   return raw || "Unknown error";
 }
 

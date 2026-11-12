@@ -5,8 +5,8 @@ import { useBalance, useChainId, useConnect, useConnection, useConnectors, useDi
 import { Button, Modal, Spinner } from "@/components/ui/primitives";
 import { robinhood } from "@/lib/config";
 import { fmtUsd, shortAddr } from "@/lib/format";
-import { useCollateral } from "@orderly.network/hooks";
-import { useAccountStage } from "@/lib/orderly/account";
+import { forgetStoredKey, useAccountStage, useSession } from "@/lib/lighter/session";
+import { accountSummary } from "@/lib/lighter/positions";
 import { OnboardingModal } from "./OnboardingModal";
 import { humanizeError } from "@/lib/errors";
 import { formatUnits } from "viem";
@@ -41,13 +41,13 @@ export function WalletButton() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const { stage, account } = useAccountStage();
-  const { totalValue } = useCollateral({ dp: 2 });
-  // Drops this device's Orderly key; the next trade asks for a new one.
+  const { stage, accountIndex } = useAccountStage();
+  const account = useSession((s) => s.account);
+  const totalValue = accountSummary(account)?.equity ?? null;
+  // Drops this browser's Lighter API key; trading asks for a new one next time.
   const forgetKey = () => {
-    if (!address) return;
-    // same call Orderly's SDK makes when a key expires
-    account.keyStore.cleanKey(address, "orderlyKey");
+    if (!address || accountIndex == null) return;
+    forgetStoredKey(address, accountIndex);
     location.reload();
   };
   const { data: gasBal } = useBalance({ address, chainId: robinhood.id, query: { enabled: !!address } });
@@ -115,12 +115,12 @@ export function WalletButton() {
     <div className="flex items-center gap-2" ref={menuRef}>
       <NetworkBadge />
       {stage === "ready" ? (
-        <button onClick={() => setOnboardOpen(true)} className="hidden sm:flex flex-col items-end leading-tight px-2" title="Orderly account value">
+        <button onClick={() => setOnboardOpen(true)} className="hidden sm:flex flex-col items-end leading-tight px-2" title="Lighter account equity">
           <span className="text-[10px] text-faint">Account</span>
           <span className="num text-xs">{fmtUsd(totalValue)}</span>
         </button>
       ) : stage === "no_account" || stage === "no_key" ? (
-        <Button variant="accent" className="!py-1.5 hidden sm:inline-flex" onClick={() => setOnboardOpen(true)}>Enable trading</Button>
+        <Button variant="accent" className="!py-1.5 hidden sm:inline-flex" onClick={() => setOnboardOpen(true)}>{stage === "no_account" ? "Deposit" : "Enable trading"}</Button>
       ) : stage === "checking" ? (
         <span className="hidden sm:block px-2"><Spinner /></span>
       ) : null}
@@ -138,6 +138,7 @@ export function WalletButton() {
               <div className="num text-fg break-all">{address}</div>
               <div className="mt-1">via {connector?.name}</div>
               {gasBal && <div className="mt-1 num">{Number(formatUnits(gasBal.value, gasBal.decimals)).toFixed(4)} {robinhood.nativeCurrency.symbol} on {robinhood.name}</div>}
+              {accountIndex != null && <div className="mt-1">Lighter account <span className="num text-fg">#{accountIndex}</span></div>}
               <div className="mt-1">Trading: <span className={stage === "ready" ? "text-accent" : "text-warn"}>{STAGE_LABEL[stage]}</span></div>
             </div>
             <div className="border-t border-line my-1" />
@@ -145,7 +146,7 @@ export function WalletButton() {
             <MenuItem onClick={() => navigator.clipboard?.writeText(address ?? "")}>Copy address</MenuItem>
             <MenuItem href={`${robinhood.blockExplorers?.default.url}/address/${address}`}>View on Robinhood Chain explorer</MenuItem>
             {stage === "ready" && address && (
-              <MenuItem onClick={() => { forgetKey(); setMenuOpen(false); }}>Forget trading key on this device</MenuItem>
+              <MenuItem onClick={() => { forgetKey(); setMenuOpen(false); }}>Forget trading key in this browser</MenuItem>
             )}
             <MenuItem onClick={() => { disconnect(); setMenuOpen(false); }} danger>Disconnect</MenuItem>
           </div>
@@ -157,11 +158,10 @@ export function WalletButton() {
 }
 
 const STAGE_LABEL: Record<string, string> = {
-  unavailable: "opens soon",
   disconnected: "not connected",
   checking: "checking…",
-  no_account: "no account yet",
-  no_key: "not enabled on this device",
+  no_account: "no Lighter account yet",
+  no_key: "not enabled in this browser",
   ready: "enabled",
 };
 

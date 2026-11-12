@@ -1,44 +1,41 @@
 "use client";
 import { useEffect } from "react";
-import { useMarkPricesStream, useMarketsStream } from "@orderly.network/hooks";
-import type { MarketUniverse } from "@/lib/orderly/markets";
-import { useMarkets, type LiveMarketRow } from "@/store/markets";
+import { fetchDetails } from "@/lib/lighter/api";
+import { buildUniverse, type MarketUniverse, type RawStats } from "@/lib/lighter/markets";
+import { lighterWs } from "@/lib/lighter/ws";
+import { useMarkets } from "@/store/markets";
 import { logError } from "@/lib/errors";
 
-const CACHE_KEY = "elyperp:universe:orderly";
+const CACHE_KEY = "elyperp:universe:lighter";
 
-async function loadUniverse(): Promise<MarketUniverse> {
-  const r = await fetch("/api/markets", { cache: "no-store" });
-  if (!r.ok) throw new Error(`/api/markets ${r.status}`);
-  return (await r.json()) as MarketUniverse;
-}
+// Latest stats per market id, so a market list that loads after the stream's snapshot still gets them.
+const latestStats = new Map<number, RawStats>();
 
 export function MarketSync() {
   const setUniverse = useMarkets((s) => s.setUniverse);
   const setError = useMarkets((s) => s.setError);
-  const applyTickers = useMarkets((s) => s.applyTickers);
-  const applyMarkPrices = useMarkets((s) => s.applyMarkPrices);
-  const { data: tickers } = useMarketsStream();
-  const { data: markPrices } = useMarkPricesStream();
+  const applyStats = useMarkets((s) => s.applyStats);
 
   useEffect(() => {
     let cancelled = false;
-    // show the last list we had straight away (prices get replaced by the live stream)
+    // show the last list we had straight away (stats get replaced by the live stream)
     try {
       const cached = sessionStorage.getItem(CACHE_KEY);
       if (cached) {
         const u = JSON.parse(cached) as MarketUniverse;
-        if (Date.now() - u.fetchedAt < 30 * 60_000 && Array.isArray(u.markets)) setUniverse(u.markets, u.sessions ?? {}, u.fetchedAt);
+        if (Date.now() - u.fetchedAt < 30 * 60_000 && Array.isArray(u.markets)) setUniverse(u.markets, u.fetchedAt);
       }
     } catch {
       /* ignore bad cache */
     }
-    // REST refresh picks up new listings, funding rates and trading sessions
+    // REST refresh picks up new listings and parameter changes
     const refresh = () =>
-      loadUniverse()
-        .then((u) => {
+      fetchDetails()
+        .then((rows) => {
           if (cancelled) return;
-          setUniverse(u.markets, u.sessions, u.fetchedAt);
+          const u = buildUniverse(rows);
+          setUniverse(u.markets, u.fetchedAt);
+          if (latestStats.size) applyStats([...latestStats.values()]);
           try {
             sessionStorage.setItem(CACHE_KEY, JSON.stringify(u));
           } catch {
@@ -55,15 +52,18 @@ export function MarketSync() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [setUniverse, setError]);
+  }, [setUniverse, setError, applyStats]);
 
+  // Live prices, funding, volume and open interest for every market.
   useEffect(() => {
-    if (tickers?.length) applyTickers(tickers as unknown as LiveMarketRow[]);
-  }, [tickers, applyTickers]);
-
-  useEffect(() => {
-    if (markPrices && Object.keys(markPrices).length) applyMarkPrices(markPrices);
-  }, [markPrices, applyMarkPrices]);
+    return lighterWs().subscribe("market_stats/all", (m) => {
+      const stats = m.market_stats as Record<string, RawStats> | undefined;
+      if (!stats || typeof stats !== "object") return;
+      const rows = Object.values(stats).filter((r) => r && typeof r.market_id === "number");
+      for (const r of rows) latestStats.set(r.market_id, r);
+      applyStats(rows);
+    });
+  }, [applyStats]);
 
   return null;
 }

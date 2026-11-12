@@ -1,12 +1,12 @@
 "use client";
 import clsx from "clsx";
 import { useEffect, useRef, useState } from "react";
-import { CATEGORY_LABEL, SESSION_LABEL, type Market } from "@/lib/orderly/markets";
-import { change24, fmtCompact, fmtDateTime, fmtPct, fmtPx, pnlClass } from "@/lib/format";
+import { CATEGORY_LABEL, nextFundingTime, type Market } from "@/lib/lighter/markets";
+import { change24, fmtCompact, fmtPct, fmtPx, pnlClass } from "@/lib/format";
 import { useIsStale, useNow, useWsStatus } from "@/hooks/useMarketData";
 import { Badge, Stat } from "@/components/ui/primitives";
 import { MarketSelector } from "./MarketSelector";
-import { useMarkets, usePrefs } from "@/store/markets";
+import { usePrefs } from "@/store/markets";
 
 export function MarketHeader({ market }: { market: Market }) {
   const [open, setOpen] = useState(false);
@@ -14,7 +14,6 @@ export function MarketHeader({ market }: { market: Market }) {
   const stale = useIsStale();
   const ws = useWsStatus();
   const now = useNow(1000);
-  const session = useMarkets((s) => s.sessions[market.symbol]);
   const { favorites, toggleFavorite } = usePrefs();
   const ctx = market.ctx;
   const px = ctx?.markPx || null;
@@ -33,8 +32,8 @@ export function MarketHeader({ market }: { market: Market }) {
   }, []);
 
   const chg = change24(ctx);
-  const left = ctx?.nextFundingTime ? Math.max(0, ctx.nextFundingTime - now) : null;
-  const hhmmss = left == null ? "" : [Math.floor(left / 3600000), Math.floor((left % 3600000) / 60000), Math.floor((left % 60000) / 1000)]
+  const left = Math.max(0, nextFundingTime(now) - now);
+  const hhmmss = [Math.floor(left / 3600000), Math.floor((left % 3600000) / 60000), Math.floor((left % 60000) / 1000)]
     .map((n) => String(n).padStart(2, "0")).join(":");
 
   return (
@@ -44,7 +43,6 @@ export function MarketHeader({ market }: { market: Market }) {
           <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-raised">
             <span className="text-base font-semibold">{market.base}-PERP</span>
             {market.name && <span className="text-xs text-muted hidden sm:inline">{market.name}</span>}
-            {market.builder && <Badge tone="accent">{market.builder}</Badge>}
             <span className="text-faint text-xs">▾</span>
           </button>
           {open && <MarketSelector current={market} onClose={() => setOpen(false)} />}
@@ -64,27 +62,19 @@ export function MarketHeader({ market }: { market: Market }) {
           <Stat label="24h high" value={ctx?.high24 ? fmtPx(ctx.high24, market.pxDecimals) : "--"} />
           <Stat label="24h low" value={ctx?.low24 ? fmtPx(ctx.low24, market.pxDecimals) : "--"} />
           <Stat label="Index price" value={fmtPx(ctx?.indexPx || null, market.pxDecimals)} />
-          <Stat label="Open interest" value={ctx && ctx.openInterest > 0 && ctx.markPx > 0 ? fmtCompact(ctx.openInterest * ctx.markPx) : "--"} />
+          <Stat label="Open interest" value={ctx && ctx.oiUsd > 0 ? fmtCompact(ctx.oiUsd) : "--"} />
           <Stat
-            label={`Funding (${market.fundingPeriodH}h) / countdown`}
-            value={<><span className="text-fg">{ctx ? (ctx.estFunding * 100).toFixed(4) + "%" : "--"}</span> <span className="text-muted">{hhmmss}</span></>}
+            label="Funding (1h) / countdown"
+            value={<><span className="text-fg">{ctx && ctx.fundingAt ? (ctx.funding * 100).toFixed(4) + "%" : "--"}</span> <span className="text-muted">{hhmmss}</span></>}
           />
           <Stat label="Max leverage" value={`${market.maxLeverage}x`} />
         </div>
       </div>
-      {(market.builder || market.session || market.status !== "active") && (
+      {(market.status !== "active" || market.category === "private") && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 border-t border-line text-[11px] text-muted">
           {market.status !== "active" && <Badge tone="short">{market.status.replace("_", " ")}</Badge>}
           <span>{CATEGORY_LABEL[market.category]} · <span className="num">{market.symbol}</span></span>
-          {market.builder && <span>Listed on Orderly by builder <b className="text-fg">{market.builder}</b></span>}
-          {session && (
-            <span title="Real-world-asset markets follow the underlying market's hours. Outside the session, orders may be rejected and prices can move sharply at the open.">
-              <span className={clsx("inline-block h-1.5 w-1.5 rounded-full mr-1", session.open ? "bg-accent" : "bg-warn")} />
-              {SESSION_LABEL[session.session] ?? session.session} session {session.open ? "open" : "closed"}
-              {session.open && session.nextClose ? ` · closes ${fmtDateTime(session.nextClose)}` : ""}
-              {!session.open && session.nextOpen ? ` · opens ${fmtDateTime(session.nextOpen)}` : ""} ⓘ
-            </span>
-          )}
+          {market.category === "private" && <span>Tracks an implied valuation of a private company. It is not a listed share and can move sharply.</span>}
         </div>
       )}
     </div>

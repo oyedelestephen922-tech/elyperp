@@ -1,13 +1,10 @@
 /**
- * Read-only checks against Orderly's live API and Robinhood Chain.
+ * Read-only checks against Lighter's Robinhood Chain API and Robinhood Chain itself.
  * Usage: npm run live-check
+ * Run it from a region Lighter serves (sendTx is never called here).
  */
-import { buildUniverse, type RawFutures, type RawInfo, type RawRwa } from "../src/lib/orderly/markets";
-
-const API = "https://api.orderly.org";
-const WS = "wss://ws-evm.orderly.org/ws/stream/OqdphuyCtYWxwzhxyLLjOWNdFP7sQt8RPWzmb5xY";
-const RPC = "https://rpc.mainnet.chain.robinhood.com";
-const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
+import { buildUniverse, type RawDetail } from "../src/lib/lighter/markets";
+import { COLLATERAL, LIGHTER, robinhood } from "../src/lib/config";
 
 let failures = 0;
 const ok = (name: string, cond: boolean, detail = "") => {
@@ -15,62 +12,75 @@ const ok = (name: string, cond: boolean, detail = "") => {
   if (!cond) failures++;
 };
 
-async function rows<T>(path: string): Promise<T[]> {
-  const j = (await (await fetch(API + path)).json()) as { success: boolean; data: { rows: T[] } };
-  if (!j.success) throw new Error(path);
-  return j.data.rows;
+async function get<T>(path: string): Promise<T> {
+  const r = await fetch(LIGHTER.apiUrl + path);
+  return (await r.json()) as T;
+}
+
+async function rpc(method: string, params: unknown[]) {
+  const r = await fetch(robinhood.rpcUrls.default.http[0], {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  return ((await r.json()) as { result: string }).result;
 }
 
 async function main() {
-  const [info, futures, rwa, chains, tokens] = await Promise.all([
-    rows<RawInfo>("/v1/public/info"),
-    rows<RawFutures>("/v1/public/futures"),
-    rows<RawRwa>("/v1/public/rwa/info"),
-    rows<{ chain_id: string; name: string; vault_address: string }>("/v1/public/chain_info"),
-    rows<{ token: string; chain_details: { chain_id: string; contract_address: string; decimals: number }[] }>("/v1/public/token"),
-  ]);
-  const u = buildUniverse(info, futures, rwa);
-  ok("market list", u.markets.length > 50, `${u.markets.length} markets`);
-  const slugs = new Set(u.markets.map((m) => m.slug.toLowerCase()));
-  ok("slugs are unique", slugs.size === u.markets.length);
-  const btc = u.markets.find((m) => m.slug === "BTC");
-  ok("BTC market with live mark", !!btc && (btc.ctx?.markPx ?? 0) > 0, btc ? `mark ${btc.ctx?.markPx}` : "");
+  const status = await get<{ status: number }>("/");
+  ok("API up", status.status === 200);
+  const info = await get<{ contract_address: string }>("/info");
+  ok("deposit contract matches config", info.contract_address.toLowerCase() === LIGHTER.contract.toLowerCase(), info.contract_address);
+
+  const d = await get<{ code: number; order_book_details: RawDetail[] }>("/api/v1/orderBookDetails");
+  const u = buildUniverse(d.order_book_details ?? []);
+  ok("market list", u.markets.length > 30, `${u.markets.length} perps`);
+  ok("slugs are unique", new Set(u.markets.map((m) => m.slug.toLowerCase())).size === u.markets.length);
+  const btc = u.markets.find((m) => m.symbol === "BTC");
+  ok("BTC market with mark price", !!btc && (btc.ctx?.markPx ?? 0) > 0, btc ? `id ${btc.id}, mark ${btc.ctx?.markPx}, ${btc.maxLeverage}x` : "");
   const cats = u.markets.reduce<Record<string, number>>((a, m) => ((a[m.category] = (a[m.category] ?? 0) + 1), a), {});
-  ok("stocks and indices present", (cats.stock ?? 0) > 0 && (cats.index ?? 0) > 0, JSON.stringify(cats));
+  ok("stocks present", (cats.stock ?? 0) > 0, JSON.stringify(cats));
+  ok("every price fits the signer's uint32", u.markets.every((m) => (m.ctx?.markPx ?? 0) * 10 ** m.pxDecimals * 2 < 2 ** 32));
 
-  const rh = chains.find((c) => Number(c.chain_id) === 4663);
-  ok("Robinhood Chain supported by Orderly", !!rh, rh ? `vault ${rh.vault_address}` : "");
-  const usdg = tokens.find((t) => t.token === "USDG")?.chain_details.find((c) => Number(c.chain_id) === 4663);
-  ok("USDG deposit token on Robinhood Chain", usdg?.contract_address.toLowerCase() === USDG, usdg ? `${usdg.contract_address} (${usdg.decimals} dp)` : "");
+  if (btc) {
+    const now = Date.now();
+    const c = await get<{ code: number; c: unknown[] }>(`/api/v1/candles?market_id=${btc.id}&resolution=1h&start_timestamp=${now - 50 * 3600_000}&end_timestamp=${now}&count_back=50`);
+    ok("candles", c.code === 200 && c.c.length > 10, `${c.c.length} bars`);
+    const nonce = await get<{ code: number; nonce: number }>("/api/v1/nextNonce?account_index=1&api_key_index=4");
+    ok("nextNonce endpoint", nonce.code === 200 || typeof nonce.nonce === "number");
+  }
 
-  const now = Math.floor(Date.now() / 1000);
-  const tv = (await (await fetch(`${API}/tv/history?symbol=PERP_BTC_USDC&resolution=15&from=${now - 86400}&to=${now}`)).json()) as { s: string; c?: number[] };
-  const last = tv.c?.at(-1) ?? 0;
-  ok("candles", tv.s === "ok" && (tv.c?.length ?? 0) > 50, `${tv.c?.length} bars`);
-  ok("candle close near mark", !!btc?.ctx && Math.abs(last / btc.ctx.markPx - 1) < 0.02, `close ${last} vs mark ${btc?.ctx?.markPx}`);
+  const nf = await get<{ code: number }>("/api/v1/accountsByL1Address?l1_address=0x0000000000000000000000000000000000000001");
+  ok("unknown wallet reads as 'no account'", nf.code === 21100);
 
-  const sys = (await (await fetch(`${API}/v1/public/system_info`)).json()) as { data: { status: number; msg: string } };
-  ok("Orderly system status", sys.data.status === 0, sys.data.msg);
-
-  const rpc = (await (await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] }) })).json()) as { result: string };
-  ok("Robinhood Chain RPC", Number(rpc.result) === 4663, `chainId ${Number(rpc.result)}`);
-
-  // websocket: orderbook + trade stream for BTC
+  // WebSocket: snapshot + market stats
   await new Promise<void>((resolve) => {
-    const ws = new WebSocket(WS);
-    const got = new Set<string>();
-    const done = () => { ws.close(); resolve(); };
-    const timer = setTimeout(() => { ok("websocket streams", false, `got ${[...got].join(", ") || "nothing"}`); done(); }, 15_000);
-    ws.onopen = () => {
-      for (const topic of ["PERP_BTC_USDC@orderbook", "PERP_BTC_USDC@kline_1m", "markprices"]) ws.send(JSON.stringify({ id: topic, event: "subscribe", topic }));
+    const ws = new WebSocket(LIGHTER.wsUrl);
+    const seen = new Set<string>();
+    const done = () => {
+      ok("ws order book snapshot", seen.has("subscribed/order_book"));
+      ok("ws market stats", seen.has("subscribed/market_stats"));
+      ws.close();
+      resolve();
     };
-    ws.onmessage = (m) => {
-      const j = JSON.parse(String(m.data));
-      if (j.event === "ping") return ws.send(JSON.stringify({ event: "pong" }));
-      if (j.topic) got.add(j.topic);
-      if (got.size === 3) { clearTimeout(timer); ok("websocket streams", true, [...got].join(", ")); done(); }
+    const t = setTimeout(done, 8000);
+    ws.onmessage = (e) => {
+      const m = JSON.parse(String(e.data)) as { type: string };
+      if (m.type === "connected") {
+        ws.send(JSON.stringify({ type: "subscribe", channel: `order_book/${btc?.id ?? 1}` }));
+        ws.send(JSON.stringify({ type: "subscribe", channel: "market_stats/all" }));
+      }
+      if (m.type === "ping") ws.send(JSON.stringify({ type: "pong" }));
+      seen.add(m.type);
+      if (seen.has("subscribed/order_book") && seen.has("subscribed/market_stats")) {
+        clearTimeout(t);
+        done();
+      }
     };
   });
+
+  const chain = await rpc("eth_chainId", []);
+  ok("Robinhood Chain RPC", Number(chain) === robinhood.id, String(Number(chain)));
+  const dec = await rpc("eth_call", [{ to: COLLATERAL.address, data: "0x313ce567" }, "latest"]);
+  ok("USDG decimals", Number(dec) === COLLATERAL.decimals, String(Number(dec)));
 
   console.log(failures ? `\n${failures} check(s) failed` : "\nAll checks passed");
   process.exit(failures ? 1 : 0);

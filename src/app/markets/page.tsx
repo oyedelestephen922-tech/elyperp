@@ -2,15 +2,15 @@
 import clsx from "clsx";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { CATEGORY_LABEL, type Market, type MarketCategory } from "@/lib/orderly/markets";
+import { CATEGORY_LABEL, type Market, type MarketCategory } from "@/lib/lighter/markets";
 import { change24, fmtCompact, fmtPct, fmtPx, marketPath, pnlClass } from "@/lib/format";
 import { useMarkets, usePrefs } from "@/store/markets";
 import { useIsStale } from "@/hooks/useMarketData";
 import { Badge, Empty, Spinner } from "@/components/ui/primitives";
 
 type Sort = "volume" | "change" | "oi" | "funding" | "name";
-const MAIN: MarketCategory[] = ["crypto", "stock", "index"];
-const EXTRA: MarketCategory[] = ["commodity", "fx", "other"];
+const MAIN: MarketCategory[] = ["crypto", "stock", "etf"];
+const EXTRA: MarketCategory[] = ["commodity", "private", "other"];
 
 export default function MarketsPage() {
   const router = useRouter();
@@ -24,7 +24,6 @@ export default function MarketsPage() {
   const [sort, setSort] = useState<Sort>("volume");
   const [desc, setDesc] = useState(true);
   const [status, setStatus] = useState<"active" | "all">("active");
-  const [source, setSource] = useState<"all" | "orderly" | "builders">("all");
 
   const all = Object.values(markets);
   const counts = useMemo(() => {
@@ -39,17 +38,16 @@ export default function MarketsPage() {
       const c = m.ctx;
       if (sort === "volume") return c?.amount24 ?? -1;
       if (sort === "change") return change24(c) ?? -Infinity;
-      if (sort === "oi") return c ? c.openInterest * c.markPx : -1;
-      if (sort === "funding") return c?.estFunding ?? -Infinity;
+      if (sort === "oi") return c?.oiUsd ?? -1;
+      if (sort === "funding") return c && c.fundingAt ? c.funding : -Infinity;
       return 0;
     };
     return all
       .filter((m) => (cat === "fav" ? favorites.includes(m.symbol) : m.category === cat))
       .filter((m) => status === "all" || m.status === "active")
-      .filter((m) => source === "all" || (source === "orderly" ? !m.builder : !!m.builder))
-      .filter((m) => !ql || m.base.toLowerCase().includes(ql) || (m.name ?? "").toLowerCase().includes(ql) || (m.builder ?? "").toLowerCase().includes(ql))
+      .filter((m) => !ql || m.base.toLowerCase().includes(ql) || (m.name ?? "").toLowerCase().includes(ql))
       .sort((a, b) => (sort === "name" ? a.base.localeCompare(b.base) * (desc ? -1 : 1) : (val(b) - val(a)) * (desc ? 1 : -1)));
-  }, [all, cat, favorites, status, source, q, sort, desc]);
+  }, [all, cat, favorites, status, q, sort, desc]);
 
   const header = (k: Sort, label: string, right = true) => (
     <th className={clsx("px-3 py-2 font-normal text-faint cursor-pointer select-none whitespace-nowrap", right ? "text-right" : "text-left")}
@@ -64,11 +62,11 @@ export default function MarketsPage() {
         <div>
           <h1 className="text-xl font-semibold">Markets</h1>
           <p className="text-xs text-muted mt-1">
-            {loaded ? `${all.length} perpetual markets on Orderly's shared order book, updated live.` : "Loading markets…"}
+            {loaded ? `${all.length} perpetual markets on Lighter's Robinhood Chain exchange, updated live.` : "Loading markets…"}
             {loaded && stale && <span className="text-warn"> Live prices paused, showing last snapshot.</span>}
           </p>
         </div>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search ticker or builder"
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search ticker or name"
           className="w-full sm:w-64 bg-panel border border-line-2 rounded px-3 py-2 text-sm outline-none focus:border-accent/60" />
       </div>
 
@@ -77,14 +75,9 @@ export default function MarketsPage() {
         <CatBtn on={cat === "fav"} onClick={() => setCat("fav")} label="★ Watchlist" n={favorites.length} />
         {EXTRA.filter((c) => counts[c]).map((c) => <CatBtn key={c} on={cat === c} onClick={() => setCat(c)} label={CATEGORY_LABEL[c]} n={counts[c]} subtle />)}
         <div className="flex-1" />
-        <select value={source} onChange={(e) => setSource(e.target.value as typeof source)} className="bg-panel border border-line-2 rounded px-2 py-1.5 text-xs text-muted">
-          <option value="all">All listings</option>
-          <option value="orderly">Listed by Orderly</option>
-          <option value="builders">Listed by builders</option>
-        </select>
         <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className="bg-panel border border-line-2 rounded px-2 py-1.5 text-xs text-muted">
           <option value="active">Active only</option>
-          <option value="all">Include restricted & delisting</option>
+          <option value="all">Include reduce-only & frozen</option>
         </select>
       </div>
 
@@ -99,7 +92,6 @@ export default function MarketsPage() {
             <thead><tr className="border-b border-line">
               <th className="w-8" />
               {header("name", "Market", false)}
-              <th className="px-3 py-2 font-normal text-faint text-left">Listed by</th>
               <th className="px-3 py-2 font-normal text-faint text-right">Price</th>
               {header("change", "24h change")}
               {header("volume", "24h volume")}
@@ -118,14 +110,13 @@ export default function MarketsPage() {
                     className={clsx("border-t border-line", open ? "cursor-pointer hover:bg-panel-2" : "opacity-50")}>
                     <td className="pl-3"><button onClick={(e) => { e.stopPropagation(); toggleFavorite(m.symbol); }} className={favorites.includes(m.symbol) ? "text-warn" : "text-faint hover:text-muted"} aria-label="Watchlist">★</button></td>
                     <td className="px-3 py-2"><span className="font-medium">{m.base}</span><span className="text-faint">-PERP</span>{m.name && <span className="text-faint text-[10px] ml-1.5">{m.name}</span>}</td>
-                    <td className="px-3 py-2 text-muted">{m.builder ?? "Orderly"}</td>
                     <td className="px-3 py-2 text-right num">{fmtPx(c?.markPx || null, m.pxDecimals)}</td>
                     <td className={clsx("px-3 py-2 text-right num", pnlClass(chg))}>{fmtPct(chg)}</td>
                     <td className="px-3 py-2 text-right num">{fmtCompact(c?.amount24)}</td>
-                    <td className="px-3 py-2 text-right num">{c && c.openInterest > 0 ? fmtCompact(c.openInterest * c.markPx) : "--"}</td>
-                    <td className="px-3 py-2 text-right num text-fg" title={`Per ${m.fundingPeriodH}h period`}>{c ? (c.estFunding * 100).toFixed(4) + "%" : "--"} <span className="text-faint">{m.fundingPeriodH}h</span></td>
+                    <td className="px-3 py-2 text-right num">{c && c.oiUsd > 0 ? fmtCompact(c.oiUsd) : "--"}</td>
+                    <td className="px-3 py-2 text-right num text-fg" title="Paid every hour">{c && c.fundingAt ? (c.funding * 100).toFixed(4) + "%" : "--"} <span className="text-faint">1h</span></td>
                     <td className="px-3 py-2 text-right num">{m.maxLeverage}x</td>
-                    <td className="px-3 py-2 text-right"><Badge tone={m.status === "active" ? "accent" : m.status === "delisting" || m.status === "inactive" ? "short" : "warn"}>{m.status.replace("_", " ")}</Badge></td>
+                    <td className="px-3 py-2 text-right"><Badge tone={m.status === "active" ? "accent" : m.status === "inactive" || m.status === "frozen" ? "short" : "warn"}>{m.status.replace("_", " ")}</Badge></td>
                   </tr>
                 );
               })}

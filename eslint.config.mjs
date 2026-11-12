@@ -14,6 +14,7 @@ const eslintConfig = [
   {
     ignores: [
       "node_modules/**",
+      "public/lighter/**", // vendored: Go wasm_exec.js and Lighter signer
       ".next/**",
       "out/**",
       "build/**",

@@ -5,32 +5,31 @@ import {
   type IChartApi, type IPriceLine, type ISeriesApi, type UTCTimestamp,
 } from "lightweight-charts";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useWS } from "@orderly.network/hooks";
-import { getTimestamp } from "@orderly.network/utils";
+import { fetchCandles, type CandleResolution, type RawCandle } from "@/lib/lighter/api";
+import { lighterWs } from "@/lib/lighter/ws";
 import { logError } from "@/lib/errors";
+import { toMs } from "@/lib/format";
 import { Spinner } from "@/components/ui/primitives";
 
-// [label, seconds, Orderly /tv/history resolution, live kline topic suffix]
+// [label, seconds, Lighter candle resolution]
 const INTERVALS = [
-  ["1m", 60, "1", "1m"], ["5m", 300, "5", "5m"], ["15m", 900, "15", "15m"], ["30m", 1800, "30", "30m"],
-  ["1H", 3600, "60", "1h"], ["1D", 86400, "1D", "1d"], ["1W", 604800, "1W", "1w"],
-] as const;
+  ["1m", 60, "1m"], ["5m", 300, "5m"], ["15m", 900, "15m"], ["30m", 1800, "30m"],
+  ["1H", 3600, "1h"], ["4H", 14400, "4h"], ["1D", 86400, "1d"],
+] as const satisfies readonly (readonly [string, number, CandleResolution])[];
+const PAGE = 500; // candles per request
 type Interval = (typeof INTERVALS)[number][0];
 
 interface Candle { time: UTCTimestamp; open: number; high: number; low: number; close: number; volume: number }
 export interface ChartLine { price: number; color: string; title: string; dashed?: boolean }
 
-type RawCandle = { t: number; o: number; h: number; l: number; c: number; v: number };
 const toCandle = (c: RawCandle): Candle => ({
-  time: c.t as UTCTimestamp, open: +c.o, high: +c.h, low: +c.l, close: +c.c, volume: +c.v,
+  time: Math.floor(toMs(c.t) / 1000) as UTCTimestamp, open: +c.o, high: +c.h, low: +c.l, close: +c.c, volume: +c.v,
 });
-
-async function fetchCandles(symbol: string, resolution: string, fromSec: number, toSec: number): Promise<RawCandle[]> {
-  const qs = new URLSearchParams({ symbol, resolution, from: String(Math.floor(fromSec)), to: String(Math.floor(toSec)) });
-  const r = await fetch(`/api/candles?${qs}`);
-  if (!r.ok) throw new Error(`candles ${r.status}`);
-  return r.json();
-}
+const sortCandles = (d: Candle[]) => {
+  const byTime = new Map<number, Candle>();
+  for (const c of d) if (Number.isFinite(c.open) && Number.isFinite(c.close)) byTime.set(c.time, c);
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
+};
 
 function sma(data: Candle[], n: number) {
   const out: { time: UTCTimestamp; value: number }[] = [];
@@ -53,8 +52,7 @@ function ema(data: Candle[], n: number) {
   return out;
 }
 
-export function Chart({ symbol, pricePrecision, lines }: { symbol: string; pricePrecision: number; lines: ChartLine[] }) {
-  const ws = useWS();
+export function Chart({ marketId, pricePrecision, lines }: { marketId: number; pricePrecision: number; lines: ChartLine[] }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const elRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -145,14 +143,14 @@ export function Chart({ symbol, pricePrecision, lines }: { symbol: string; price
     vol.setData([]);
     drawingsRef.current.forEach((l) => series.removePriceLine(l));
     drawingsRef.current = [];
-    const [, secs, resolution, klineType] = INTERVALS.find((i) => i[0] === interval)!;
+    const [, secs, resolution] = INTERVALS.find((i) => i[0] === interval)!;
     const volData = (d: Candle[]) => d.map((c) => ({ time: c.time, value: c.volume, color: c.close >= c.open ? "#18d98b55" : "#f2495e55" }));
-    const nowSec = () => Math.floor(Date.now() / 1000);
+    const now = () => Date.now();
 
-    fetchCandles(symbol, resolution, nowSec() - secs * 1500, nowSec() + secs)
+    fetchCandles(marketId, resolution, now() - secs * 1000 * PAGE, now() + secs * 1000, PAGE)
       .then((raw) => {
         if (cancelled) return;
-        const d = raw.map(toCandle);
+        const d = sortCandles(raw.map(toCandle));
         dataRef.current = d;
         series.setData(d);
         vol.setData(volData(d));
@@ -163,7 +161,7 @@ export function Chart({ symbol, pricePrecision, lines }: { symbol: string; price
       })
       .catch((e) => {
         logError("candles", e);
-        if (!cancelled) setError("Couldn't load candles from Orderly.");
+        if (!cancelled) setError("Couldn't load candles from Lighter.");
       })
       .finally(() => !cancelled && setLoading(false));
 
@@ -172,10 +170,10 @@ export function Chart({ symbol, pricePrecision, lines }: { symbol: string; price
       if (!range || range.from > 10 || loadingOlder.current || exhausted.current || !dataRef.current.length) return;
       loadingOlder.current = true;
       const oldest = dataRef.current[0].time;
-      fetchCandles(symbol, resolution, oldest - secs * 1000, oldest - 1)
+      fetchCandles(marketId, resolution, (oldest - secs * PAGE) * 1000, oldest * 1000 - 1, PAGE)
         .then((raw) => {
           if (cancelled) return;
-          const older = raw.map(toCandle).filter((c) => c.time < dataRef.current[0].time);
+          const older = sortCandles(raw.map(toCandle)).filter((c) => c.time < dataRef.current[0].time);
           if (!older.length) { exhausted.current = true; return; }
           dataRef.current = [...older, ...dataRef.current];
           series.setData(dataRef.current);
@@ -187,30 +185,37 @@ export function Chart({ symbol, pricePrecision, lines }: { symbol: string; price
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
 
-    // Live candle for the current bucket
-    const topic = `${symbol}@kline_${klineType}`;
-    const unsubscribe = ws.subscribe(
-      { id: topic, event: "subscribe", topic, ts: getTimestamp() },
-      {
-        onMessage: (k: { symbol: string; open: number; high: number; low: number; close: number; volume: number; startTime: number }) => {
-          if (cancelled || k.symbol !== symbol) return;
-          const bar: Candle = { time: Math.floor(k.startTime / 1000) as UTCTimestamp, open: +k.open, high: +k.high, low: +k.low, close: +k.close, volume: +k.volume };
-          const d = dataRef.current;
-          const last = d[d.length - 1];
-          if (last && bar.time < last.time) return;
-          if (last && bar.time === last.time) d[d.length - 1] = bar;
-          else d.push(bar);
-          series.update(bar);
-          vol.update({ time: bar.time, value: bar.volume, color: bar.close >= bar.open ? "#18d98b55" : "#f2495e55" });
-        },
-      },
-    );
+    // Live candle for the current bucket, built from the trade stream
+    const unsubscribe = lighterWs().subscribe(`trade/${marketId}`, (m) => {
+      if (cancelled || m.type !== "update/trade") return;
+      const trades = (m.trades as { price: string; size: string; timestamp: number }[] | undefined) ?? [];
+      const d = dataRef.current;
+      if (!d.length) return;
+      for (const t of [...trades].sort((a, b) => a.timestamp - b.timestamp)) {
+        const px = Number(t.price);
+        const sz = Number(t.size);
+        if (!(px > 0)) continue;
+        const bucket = (Math.floor(toMs(t.timestamp) / 1000 / secs) * secs) as UTCTimestamp;
+        const last = d[d.length - 1];
+        if (bucket < last.time) continue;
+        let bar: Candle;
+        if (bucket === last.time) {
+          bar = { ...last, high: Math.max(last.high, px), low: Math.min(last.low, px), close: px, volume: last.volume + sz };
+          d[d.length - 1] = bar;
+        } else {
+          bar = { time: bucket, open: last.close, high: Math.max(last.close, px), low: Math.min(last.close, px), close: px, volume: sz };
+          d.push(bar);
+        }
+        series.update(bar);
+        vol.update({ time: bar.time, value: bar.volume, color: bar.close >= bar.open ? "#18d98b55" : "#f2495e55" });
+      }
+    });
     return () => {
       cancelled = true;
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
-      unsubscribe?.();
+      unsubscribe();
     };
-  }, [symbol, interval, refreshIndicators, ws]);
+  }, [marketId, interval, refreshIndicators]);
 
   // Position / order overlays
   useEffect(() => {

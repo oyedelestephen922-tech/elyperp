@@ -43,7 +43,16 @@ export const pnlClass = (v: number | null | undefined) =>
 
 export const marketPath = (slug: string) => `/trade/${encodeURIComponent(slug)}`;
 
-/** 24h change from the rolling open; null when there is no open yet. */
-export function change24(ctx: { markPx: number; open24: number } | null | undefined) {
-  return ctx && ctx.open24 > 0 && ctx.markPx > 0 ? ctx.markPx / ctx.open24 - 1 : null;
+/** 24h change as a fraction (-0.0209 for -2.09%); null when there's no data. */
+export function change24(ctx: { changePct24: number; lastPx: number } | null | undefined) {
+  return ctx && ctx.lastPx > 0 && Number.isFinite(ctx.changePct24) ? ctx.changePct24 / 100 : null;
+}
+
+/** Lighter timestamps come in seconds, milliseconds or microseconds depending on the endpoint. */
+export function toMs(t: number | null | undefined) {
+  const v = Number(t);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  if (v > 1e14) return Math.floor(v / 1000); // microseconds
+  if (v < 1e11) return v * 1000; // seconds
+  return v;
 }

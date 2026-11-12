@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useWsStatus as useOrderlyWsStatus, WsNetworkStatus } from "@orderly.network/hooks";
 import { STALE_AFTER_MS } from "@/lib/config";
+import { useWsState } from "@/lib/lighter/ws";
 import { useMarkets } from "@/store/markets";
 
 export function useNow(ms = 1000) {
@@ -14,8 +14,8 @@ export function useNow(ms = 1000) {
 }
 
 export function useWsStatus(): "open" | "unstable" | "closed" {
-  const s = useOrderlyWsStatus();
-  return s === WsNetworkStatus.Connected ? "open" : s === WsNetworkStatus.Unstable ? "unstable" : "closed";
+  const s = useWsState((x) => x.status);
+  return s === "open" ? "open" : s === "connecting" ? "unstable" : "closed";
 }
 
 /** True when no live price update has arrived for a while. */

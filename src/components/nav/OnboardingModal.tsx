@@ -1,99 +1,113 @@
 "use client";
 import clsx from "clsx";
-import { useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { formatUnits } from "viem";
-import { useSwitchChain } from "wagmi";
-import { useCollateral, useDeposit, useWithdraw } from "@orderly.network/hooks";
+import { useChainId, useConnection, useSwitchChain } from "wagmi";
 import { Button, Modal, Spinner, Tabs } from "@/components/ui/primitives";
-import { COLLATERAL, LINKS, TRADING_ENABLED, robinhood } from "@/lib/config";
+import { COLLATERAL, INTEGRATOR, LINKS, robinhood } from "@/lib/config";
 import { fmtUsd } from "@/lib/format";
 import { humanizeError, logError } from "@/lib/errors";
-import { useAccountStage } from "@/lib/orderly/account";
+import { useAccountStage, useSession } from "@/lib/lighter/session";
+import { accountSummary } from "@/lib/lighter/positions";
+import {
+  approveIntegrator, approveUsdg, canApproveIntegrator, depositUsdg, integratorFor, readUsdg, setupTradingKey, withdrawUsdg,
+} from "@/lib/lighter/actions";
 import { useToasts } from "@/store/toasts";
 
 export function OnboardingModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { stage, address, chainId, onRobinhood, createAccount, createOrderlyKey } = useAccountStage();
+  const { stage, accountIndex } = useAccountStage();
+  const { address } = useConnection();
+  const chainId = useChainId();
+  const onRobinhood = chainId === robinhood.id;
   const { mutate: switchChain, isPending: switching } = useSwitchChain();
-  const [busy, setBusy] = useState<"account" | "key" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const push = useToasts((s) => s.push);
+  const keyStatus = useSession((s) => s.keyStatus);
+  // re-render when the tier or approvals change, so the builder-fee option shows correctly
+  useSession((s) => s.tier);
+  useSession((s) => s.account?.approved_integrators);
+  const hasAccount = accountIndex != null;
 
-  const run = async (kind: "account" | "key") => {
-    setBusy(kind);
+  const enable = async () => {
+    setBusy(true);
     setError(null);
     try {
-      if (kind === "account") await createAccount();
-      else await createOrderlyKey(true);
-      push({ title: kind === "account" ? "Elyperp account created" : "Trading enabled on this device", state: "success" });
+      await setupTradingKey(setStep);
+      useToasts.getState().push({ title: "Trading enabled in this browser", state: "success" });
     } catch (e) {
-      logError(kind === "account" ? "createAccount" : "createOrderlyKey", e);
+      logError("setupTradingKey", e);
       setError(humanizeError(e));
     } finally {
-      setBusy(null);
+      setBusy(false);
+      setStep(null);
     }
   };
 
-  const hasAccount = stage === "no_key" || stage === "ready";
-
   return (
     <Modal open={open} onClose={onClose} title="Account setup & funds" width="max-w-xl">
-      {!TRADING_ENABLED ? (
-        <p className="text-xs text-muted">Trading on Elyperp opens soon. Market data is live now; account setup will appear here once trading opens.</p>
-      ) : (
-        <ol className="flex flex-col gap-3 text-xs">
-          <Step n={1} done={!!address} title="Wallet connected">
-            <span className="num text-muted break-all">{address}</span>
-          </Step>
+      <ol className="flex flex-col gap-3 text-xs">
+        <Step n={1} done={!!address} title="Wallet connected">
+          <span className="num text-muted break-all">{address}</span>
+        </Step>
 
-          <Step n={2} done={onRobinhood} title={`${robinhood.name} (chain ${robinhood.id})`}>
-            {onRobinhood ? (
-              <p className="text-muted">Connected to {robinhood.name}. Deposits and withdrawals use this network.</p>
+        <Step n={2} done={onRobinhood} title={`${robinhood.name} (chain ${robinhood.id})`}>
+          {onRobinhood ? (
+            <p className="text-muted">Connected to {robinhood.name}. Deposits and withdrawals use this network.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <p className="text-warn">Your wallet is on chain {chainId}. Switch to {robinhood.name} to move funds.</p>
+              <Button onClick={() => switchChain({ chainId: robinhood.id })} disabled={switching} className="self-start">
+                {switching ? "Switching…" : `Switch to ${robinhood.name}`}
+              </Button>
+            </div>
+          )}
+        </Step>
+
+        <Step n={3} done={hasAccount} title={hasAccount ? `Lighter account #${accountIndex}` : `Deposit ${COLLATERAL.symbol} to open your Lighter account`}>
+          {stage === "checking" && !hasAccount ? (
+            <span className="flex items-center gap-2 text-muted"><Spinner /> Looking up your Lighter account…</span>
+          ) : hasAccount ? (
+            <p className="text-muted">Found. Your collateral sits in Lighter&apos;s contract on {robinhood.name}, not with Elyperp.</p>
+          ) : (
+            <div className="flex flex-col gap-2 text-muted">
+              <p>Your first deposit creates your Lighter account. It shows up here a minute or two after the deposit confirms.</p>
+              {onRobinhood ? <Deposit /> : <p className="text-warn">Switch to {robinhood.name} first.</p>}
+            </div>
+          )}
+        </Step>
+
+        <Step n={4} done={stage === "ready"} title="Enable trading in this browser">
+          <div className="flex flex-col gap-2 text-muted">
+            <p>
+              Sign one message to register a trading key for this browser. The key signs orders without more wallet pop-ups.
+              It can withdraw only to your own wallet address, and you can forget it from the wallet menu.
+            </p>
+            {keyStatus === "invalid" && <p className="text-warn">The key saved in this browser is no longer registered with Lighter. Enable trading again.</p>}
+            {stage === "ready" ? (
+              <span className="text-accent">Trading enabled in this browser.</span>
             ) : (
-              <div className="flex flex-col gap-2">
-                <p className="text-warn">Your wallet is on chain {chainId}. Switch to {robinhood.name} to create your account and move funds.</p>
-                <Button onClick={() => switchChain({ chainId: robinhood.id })} disabled={switching} className="self-start">
-                  {switching ? "Switching…" : `Switch to ${robinhood.name}`}
-                </Button>
-              </div>
+              <Button variant="accent" onClick={enable} disabled={!hasAccount || busy} className="self-start">
+                {busy ? (step ?? "Working…") : "Enable trading"}
+              </Button>
             )}
-          </Step>
+          </div>
+        </Step>
 
-          <Step n={3} done={hasAccount} title="Create your Elyperp account">
-            <div className="flex flex-col gap-2 text-muted">
-              <p>Sign one message to open your trading account on Orderly&apos;s order book. This is free and doesn&apos;t send a transaction.</p>
-              {stage === "checking" ? (
-                <span className="flex items-center gap-2"><Spinner /> Checking your wallet…</span>
-              ) : !hasAccount ? (
-                <Button variant="accent" onClick={() => run("account")} disabled={!onRobinhood || busy !== null} className="self-start">
-                  {busy === "account" ? "Confirm in wallet…" : "Create account"}
-                </Button>
-              ) : <span className="text-accent">Account found.</span>}
-            </div>
+        {stage === "ready" && (
+          <Step n={5} done={false} title="Funds">
+            <Funds onRobinhood={onRobinhood} />
           </Step>
+        )}
 
-          <Step n={4} done={stage === "ready"} title="Enable trading">
-            <div className="flex flex-col gap-2 text-muted">
-              <p>
-                Sign once to create a trading key in this browser. It can place and cancel orders but
-                <b className="text-fg"> cannot withdraw funds</b>. It lasts up to a year and you can forget it from the wallet menu.
-              </p>
-              {stage === "ready" ? (
-                <span className="text-accent">Trading enabled on this device.</span>
-              ) : (
-                <Button variant="accent" onClick={() => run("key")} disabled={!hasAccount || busy !== null} className="self-start">
-                  {busy === "key" ? "Confirm in wallet…" : "Enable trading"}
-                </Button>
-              )}
-            </div>
-          </Step>
+        {stage === "ready" && canApproveIntegrator() && !integratorFor() && <BuilderFee />}
 
-          <Step n={5} done={false} title={`Fund with ${COLLATERAL.symbol}`}>
-            {stage === "ready" ? <Funds onRobinhood={onRobinhood} /> : <p className="text-muted">Available once trading is enabled.</p>}
-          </Step>
-
-          {error && <p className="text-short">{error}</p>}
-        </ol>
-      )}
+        {error && <p className="text-short">{error}</p>}
+        <p className="text-faint">
+          Lighter doesn&apos;t accept orders from restricted regions, including the United States and the United Kingdom.
+          Market data works everywhere.
+        </p>
+      </ol>
     </Modal>
   );
 }
@@ -103,40 +117,42 @@ function Funds({ onRobinhood }: { onRobinhood: boolean }) {
   return (
     <div className="flex flex-col gap-2">
       <Tabs value={tab} onChange={setTab} items={[{ value: "deposit", label: "Deposit" }, { value: "withdraw", label: "Withdraw" }]} />
-      {!onRobinhood ? (
-        <p className="text-warn">Switch your wallet to {robinhood.name} first.</p>
-      ) : tab === "deposit" ? <Deposit /> : <Withdraw />}
+      {tab === "withdraw" ? <Withdraw /> : !onRobinhood ? <p className="text-warn">Switch your wallet to {robinhood.name} first.</p> : <Deposit />}
     </div>
   );
 }
 
 function Deposit() {
-  const { balance, allowance, depositFee, quantity, setQuantity, approve, deposit, balanceRevalidating } = useDeposit({
-    address: COLLATERAL.address,
-    decimals: COLLATERAL.decimals,
-    srcChainId: robinhood.id,
-    srcToken: COLLATERAL.symbol,
-    dstToken: COLLATERAL.symbol,
-  });
+  const { address } = useConnection();
+  const [amount, setAmount] = useState("");
+  const [bal, setBal] = useState<{ balance: bigint; allowance: bigint } | null>(null);
   const [busy, setBusy] = useState<"approve" | "deposit" | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const amt = Number(quantity) || 0;
-  const bal = Number(balance) || 0;
-  const needsApproval = amt > 0 && Number(allowance) < amt;
-  const fee = depositFee ? Number(formatUnits(depositFee, 18)) : 0;
+
+  const load = useCallback(() => {
+    if (!address) return;
+    readUsdg(address).then(setBal).catch((e) => logError("usdg balance", e));
+  }, [address]);
+  useEffect(load, [load]);
+
+  const balance = bal ? Number(formatUnits(bal.balance, COLLATERAL.decimals)) : 0;
+  const allowance = bal ? Number(formatUnits(bal.allowance, COLLATERAL.decimals)) : 0;
+  const amt = Number(amount) || 0;
+  const needsApproval = amt > 0 && allowance < amt;
 
   const act = async (kind: "approve" | "deposit") => {
+    if (!address) return;
     setBusy(kind);
     setErr(null);
     const { push, update } = useToasts.getState();
     const id = push({ title: kind === "approve" ? `Approve ${COLLATERAL.symbol}` : `Deposit ${amt} ${COLLATERAL.symbol}`, state: "pending", detail: "Confirm in your wallet" });
     try {
-      if (kind === "approve") await approve(quantity);
+      if (kind === "approve") await approveUsdg(amount);
       else {
-        await deposit();
-        setQuantity("");
+        await depositUsdg(address, amount);
+        setAmount("");
       }
-      update(id, { state: "success", detail: kind === "approve" ? "Approved" : "Deposit sent. It shows in your balance after Orderly confirms it, usually within a few minutes." });
+      update(id, { state: "success", detail: kind === "approve" ? "Approved" : "Deposit confirmed on Robinhood Chain. Lighter credits it shortly." });
     } catch (e) {
       logError(kind, e);
       const msg = humanizeError(e);
@@ -144,27 +160,27 @@ function Deposit() {
       update(id, { state: "failed", detail: msg });
     } finally {
       setBusy(null);
+      load();
     }
   };
 
   return (
     <div className="flex flex-col gap-2 text-muted">
-      <div className="flex justify-between"><span>Wallet balance</span><span className="num text-fg">{balanceRevalidating && !balance ? <Spinner /> : `${bal.toLocaleString("en-US", { maximumFractionDigits: 6 })} ${COLLATERAL.symbol}`}</span></div>
+      <div className="flex justify-between"><span>Wallet balance</span><span className="num text-fg">{bal ? `${balance.toLocaleString("en-US", { maximumFractionDigits: 6 })} ${COLLATERAL.symbol}` : <Spinner />}</span></div>
       <label className="flex items-center gap-2 rounded border border-line-2 bg-panel px-2.5 py-2">
         <span className="text-faint">Amount</span>
-        <input inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0.00" className="num flex-1 bg-transparent outline-none" />
-        <button className="text-accent text-[11px]" onClick={() => setQuantity(String(bal))} disabled={!bal}>Max</button>
+        <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0.00" className="num flex-1 bg-transparent outline-none" />
+        <button className="text-accent text-[11px]" onClick={() => bal && setAmount(formatUnits(bal.balance, COLLATERAL.decimals))} disabled={!balance}>Max</button>
       </label>
-      <div className="flex justify-between text-faint"><span>Network fee (paid in ETH)</span><span className="num">{fee ? `${fee.toFixed(6)} ETH` : "--"}</span></div>
-      {amt > bal && <p className="text-short">Amount is more than your wallet balance.</p>}
+      {amt > balance && <p className="text-short">Amount is more than your wallet balance.</p>}
       {needsApproval ? (
-        <Button onClick={() => act("approve")} disabled={busy !== null || amt > bal} className="self-start">{busy === "approve" ? "Confirm in wallet…" : `Approve ${COLLATERAL.symbol}`}</Button>
+        <Button onClick={() => act("approve")} disabled={busy !== null || amt > balance} className="self-start">{busy === "approve" ? "Confirm in wallet…" : `Approve ${COLLATERAL.symbol}`}</Button>
       ) : (
-        <Button variant="accent" onClick={() => act("deposit")} disabled={busy !== null || !(amt > 0) || amt > bal} className="self-start">{busy === "deposit" ? "Confirm in wallet…" : "Deposit"}</Button>
+        <Button variant="accent" onClick={() => act("deposit")} disabled={busy !== null || !(amt > 0) || amt > balance} className="self-start">{busy === "deposit" ? "Confirm in wallet…" : "Deposit"}</Button>
       )}
       {err && <p className="text-short">{err}</p>}
       <p className="text-faint">
-        Need {COLLATERAL.symbol} on {robinhood.name}? Bridge it in with a route Robinhood lists:{" "}
+        Deposits go to Lighter&apos;s contract on {robinhood.name}, with a small network fee in ETH. Need {COLLATERAL.symbol}?{" "}
         <a href={LINKS.robinhoodBridging} target="_blank" rel="noreferrer" className="text-accent">Robinhood Chain bridging ↗</a>
       </p>
     </div>
@@ -172,22 +188,24 @@ function Deposit() {
 }
 
 function Withdraw() {
-  const { maxAmount, unsettledPnL, withdraw, dst } = useWithdraw({ srcChainId: robinhood.id, token: COLLATERAL.symbol, decimals: COLLATERAL.decimals });
-  const { freeCollateral } = useCollateral({ dp: 2 });
+  const account = useSession((s) => s.account);
+  const summary = accountSummary(account);
+  const available = summary?.available ?? 0;
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const amt = Number(amount) || 0;
+  const maxWithdraw = Math.floor(available * 10 ** COLLATERAL.decimals) / 10 ** COLLATERAL.decimals;
 
   const go = async () => {
     setBusy(true);
     setErr(null);
     const { push, update } = useToasts.getState();
-    const id = push({ title: `Withdraw ${amt} ${COLLATERAL.symbol}`, state: "pending", detail: "Confirm in your wallet" });
+    const id = push({ title: `Withdraw ${amt} ${COLLATERAL.symbol}`, state: "pending", detail: "Sending to Lighter…" });
     try {
-      await withdraw({ chainId: robinhood.id, token: COLLATERAL.symbol, amount, allowCrossChainWithdraw: false });
+      await withdrawUsdg(amount);
       setAmount("");
-      update(id, { state: "success", detail: `Withdrawal requested to ${dst?.network || robinhood.name}. It arrives after Orderly processes it.` });
+      update(id, { state: "success", detail: `Withdrawal requested. It arrives at your wallet on ${robinhood.name} once Lighter processes it.` });
     } catch (e) {
       logError("withdraw", e);
       const msg = humanizeError(e);
@@ -200,19 +218,49 @@ function Withdraw() {
 
   return (
     <div className="flex flex-col gap-2 text-muted">
-      <div className="flex justify-between"><span>Withdrawable</span><span className="num text-fg">{maxAmount.toLocaleString("en-US", { maximumFractionDigits: 6 })} {COLLATERAL.symbol}</span></div>
-      <div className="flex justify-between text-faint"><span>Free collateral</span><span className="num">{fmtUsd(freeCollateral)}</span></div>
-      {unsettledPnL !== 0 && <div className="flex justify-between text-faint"><span>Unsettled PnL</span><span className="num">{fmtUsd(unsettledPnL)}</span></div>}
+      <div className="flex justify-between"><span>Available</span><span className="num text-fg">{fmtUsd(available)}</span></div>
+      {summary && <div className="flex justify-between text-faint"><span>Account equity</span><span className="num">{fmtUsd(summary.equity)}</span></div>}
       <label className="flex items-center gap-2 rounded border border-line-2 bg-panel px-2.5 py-2">
         <span className="text-faint">Amount</span>
         <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0.00" className="num flex-1 bg-transparent outline-none" />
-        <button className="text-accent text-[11px]" onClick={() => setAmount(String(maxAmount))} disabled={!maxAmount}>Max</button>
+        <button className="text-accent text-[11px]" onClick={() => setAmount(String(maxWithdraw))} disabled={!(maxWithdraw > 0)}>Max</button>
       </label>
-      {amt > maxAmount && <p className="text-short">Amount is more than you can withdraw.</p>}
-      <Button variant="accent" onClick={go} disabled={busy || !(amt > 0) || amt > maxAmount} className="self-start">{busy ? "Confirm in wallet…" : "Withdraw"}</Button>
+      {amt > maxWithdraw && <p className="text-short">Amount is more than you can withdraw.</p>}
+      {amt > 0 && amt < COLLATERAL.minWithdraw && <p className="text-short">Minimum withdrawal is {COLLATERAL.minWithdraw} {COLLATERAL.symbol}.</p>}
+      <Button variant="accent" onClick={go} disabled={busy || !(amt >= COLLATERAL.minWithdraw) || amt > maxWithdraw} className="self-start">{busy ? "Sending…" : "Withdraw"}</Button>
       {err && <p className="text-short">{err}</p>}
-      <p className="text-faint">Withdrawals go to your connected address on {robinhood.name}. Orderly charges a small withdrawal fee in {COLLATERAL.symbol}.</p>
+      <p className="text-faint">Withdrawals always go to your connected address on {robinhood.name}.</p>
     </div>
+  );
+}
+
+function BuilderFee() {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const pct = (v: number) => `${((v / 1_000_000) * 100).toFixed(4)}%`;
+  const go = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await approveIntegrator();
+      useToasts.getState().push({ title: "Builder fee approved", state: "success" });
+    } catch (e) {
+      logError("approve integrator", e);
+      setErr(humanizeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <li className="rounded border border-line-2 p-3 flex flex-col gap-2 text-muted">
+      <div className="text-fg font-medium">Optional: support Elyperp</div>
+      <p>
+        Your Lighter tier allows partner fees. You can approve Elyperp&apos;s builder fee of {pct(INTEGRATOR.takerFee)} taker
+        and {pct(INTEGRATOR.makerFee)} maker on your orders. Nothing is charged unless you approve it, and the approval lasts 180 days.
+      </p>
+      <Button onClick={go} disabled={busy} className="self-start">{busy ? "Confirm in wallet…" : "Approve builder fee"}</Button>
+      {err && <p className="text-short">{err}</p>}
+    </li>
   );
 }
 
