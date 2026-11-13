@@ -20,7 +20,7 @@ export function TopNav() {
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-bg/95 backdrop-blur">
       <div className="flex items-center h-12 px-3 gap-4">
-        <Link href="/trade/BTC" aria-label="Elyperp home"><Logo /></Link>
+        <Link href="/" aria-label="Elyperp home"><Logo /></Link>
         <nav className="hidden md:flex items-center gap-1">
           {LINKS.map((l) => (
             <Link

@@ -83,6 +83,10 @@ export function OnboardingModal({ open, onClose }: { open: boolean; onClose: () 
               Sign one message to register a trading key for this browser. The key signs orders without more wallet pop-ups.
               It can withdraw only to your own wallet address, and you can forget it from the wallet menu.
             </p>
+            <p className="text-faint">
+              By enabling trading you agree to the <a href="/legal/terms" target="_blank" className="text-accent">Terms of Use</a> and
+              confirm you&apos;ve read the <a href="/legal/risk" target="_blank" className="text-accent">Risk Disclosure</a>.
+            </p>
             {keyStatus === "invalid" && <p className="text-warn">The key saved in this browser is no longer registered with Lighter. Enable trading again.</p>}
             {stage === "ready" ? (
               <span className="text-accent">Trading enabled in this browser.</span>

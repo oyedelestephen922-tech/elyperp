@@ -1,4 +1,5 @@
 import { COLLATERAL, LIGHTER, LINKS, robinhood } from "@/lib/config";
+import { SiteFooter } from "@/components/site/SiteFooter";
 
 export const metadata = { title: "Docs | Elyperp" };
 
@@ -15,6 +16,7 @@ export default function DocsPage() {
     ["orders", "Orders"], ["risk", "Margin, liquidation & funding"], ["fees", "Fees"], ["security", "Security"], ["limits", "Known limitations"],
   ];
   return (
+    <>
     <div className="p-4 md:p-8 max-w-5xl w-full mx-auto grid md:grid-cols-[180px_1fr] gap-8">
       <nav className="hidden md:flex flex-col gap-1 text-xs sticky top-20 self-start">
         {toc.map(([id, t]) => <a key={id} href={`#${id}`} className="text-muted hover:text-accent py-1">{t}</a>)}
@@ -90,5 +92,7 @@ export default function DocsPage() {
         </S>
       </div>
     </div>
+    <SiteFooter />
+    </>
   );
 }

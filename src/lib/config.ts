@@ -51,6 +51,15 @@ export const DEFAULT_SLIPPAGE = 0.01;
 
 export const STALE_AFTER_MS = 30_000;
 
+// Social links show in the site footer only when set.
+const url = (v: string | undefined) => (v && /^https:\/\//.test(v.trim()) ? v.trim() : "");
+export const SOCIAL = {
+  x: url(process.env.NEXT_PUBLIC_X_URL),
+  telegram: url(process.env.NEXT_PUBLIC_TELEGRAM_URL),
+};
+
+export const LEGAL_UPDATED = "November 13, 2026";
+
 export const LINKS = {
   lighterApp: "https://robinhoodchain.lighter.xyz",
   lighterDocs: "https://docs.lighter.xyz",
