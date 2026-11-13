@@ -8,6 +8,7 @@ import { COLLATERAL, robinhood } from "@/lib/config";
 import { useMarkets } from "@/store/markets";
 import { Spinner } from "@/components/ui/primitives";
 import { SiteFooter } from "@/components/site/SiteFooter";
+import { AnimatedLogo } from "@/components/site/AnimatedLogo";
 
 const FEATURED = ["BTC", "ETH", "NVDA", "TSLA", "XAU", "SPY", "OPENAI", "SOL"];
 const CATS: MarketCategory[] = ["crypto", "stock", "etf", "commodity", "private"];
@@ -32,6 +33,10 @@ export default function Home() {
         <div className="absolute inset-0 opacity-[0.35] pointer-events-none [background-image:linear-gradient(#121815_1px,transparent_1px)] [background-size:100%_64px]" />
         <div className="relative max-w-6xl mx-auto px-4 md:px-8 py-14 md:py-24 grid gap-12 lg:grid-cols-[1.15fr_1fr] items-center">
           <div className="flex flex-col gap-6">
+            <div className="lg:hidden flex flex-col items-center -mt-6 -mb-2">
+              <AnimatedLogo size={120} />
+              <span className="ely-wordmark -mt-10 text-5xl font-semibold tracking-tight">Ely<span className="ely-perp">perp</span></span>
+            </div>
             <span className="self-start rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-[11px] text-accent">
               Live on {robinhood.name}
             </span>
@@ -53,7 +58,12 @@ export default function Home() {
             </dl>
           </div>
 
-          <div className="panel overflow-hidden">
+          <div className="flex flex-col items-center gap-2 lg:-mt-10">
+          <div className="hidden lg:flex flex-col items-center">
+            <AnimatedLogo size={150} />
+            <span className="ely-wordmark -mt-12 text-5xl md:text-6xl font-semibold tracking-tight">Ely<span className="ely-perp">perp</span></span>
+          </div>
+          <div className="panel overflow-hidden w-full lg:mt-6">
             <div className="flex items-center justify-between px-4 py-3 border-b border-line text-xs">
               <span className="text-muted">Live prices</span>
               <span className="flex items-center gap-1.5 text-faint"><span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />streaming</span>
@@ -79,6 +89,7 @@ export default function Home() {
                 })}
               </ul>
             )}
+          </div>
           </div>
         </div>
       </section>

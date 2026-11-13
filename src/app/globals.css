@@ -80,3 +80,39 @@ input[type="number"] {
 input[type="range"] {
   accent-color: var(--color-accent);
 }
+
+/* landing page: spinning logo */
+.ely-stage {
+  perspective: 900px;
+}
+.ely-spin {
+  display: block;
+  transform-style: preserve-3d;
+  animation: ely-turn 3.6s linear infinite;
+  filter: drop-shadow(0 0 18px rgba(24, 217, 139, 0.55)) drop-shadow(0 0 42px rgba(24, 217, 139, 0.25));
+}
+.ely-glow {
+  background: radial-gradient(circle, rgba(24, 217, 139, 0.28) 0%, rgba(24, 217, 139, 0.08) 45%, transparent 70%);
+  animation: ely-pulse 3.6s ease-in-out infinite;
+}
+.ely-wordmark {
+  color: #e4ebe7;
+  text-shadow: 0 0 28px rgba(24, 217, 139, 0.35);
+}
+.ely-perp {
+  background: linear-gradient(90deg, #18d98b, #7dffc4 60%, #c8ff6b);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+@keyframes ely-turn {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(360deg); }
+}
+@keyframes ely-pulse {
+  0%, 100% { transform: scale(0.9); opacity: 0.7; }
+  50% { transform: scale(1.1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ely-spin, .ely-glow { animation: none; }
+}
