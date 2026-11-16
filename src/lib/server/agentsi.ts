@@ -5,7 +5,8 @@
  * and short caches so many visitors don't multiply into many upstream calls.
  */
 
-export const AGENTSI_BASE = "https://agentsi.site";
+// AGENTSI_BASE_URL is for local testing against a stand-in server only.
+export const AGENTSI_BASE = process.env.AGENTSI_BASE_URL || "https://agentsi.site";
 const UA = "Elyperp/1.0 (+https://www.elyperp.xyz/intelligence)";
 
 export class UpstreamError extends Error {

@@ -37,6 +37,8 @@ Nothing is required. Trading works with an empty env.
 | `NEXT_PUBLIC_LIGHTER_INTEGRATOR_MAKER_FEE` | empty | Builder maker fee, same units. |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | empty | WalletConnect is off unless set |
 | `NEXT_PUBLIC_ROBINHOOD_RPC_URL` | public Robinhood RPC | rate-limited; use a provider key for heavy traffic |
+| `NEXT_PUBLIC_INTEL_REGISTRY` | empty | Address of the deployed `ElyperpIntelRegistry`. Empty = no on-chain record. |
+| `ELYPERP_PUBLISHER_KEY` | empty | **Server only, mark Sensitive.** Private key of the registry publisher wallet. Never prefix with `NEXT_PUBLIC_`. |
 
 ### Builder fee
 
@@ -66,7 +68,7 @@ API route: `/api/health`.
 
 ## Intelligence (`/intelligence`)
 
-Read-only token checks powered by [Agent SI](https://agentsi.site) (built by PANTHER). No wallet, no keys, nothing signed or deployed.
+Token checks powered by [Agent SI](https://agentsi.site) (built by PANTHER), recorded on Robinhood Chain. Users never connect a wallet or sign anything for it.
 
 - **Server proxy.** Agent SI refuses calls from other sites' pages, so the browser only talks to Elyperp's own routes, which call Agent SI from the server: `/api/intel/detect`, `/api/intel/scan` (streams Agent SI's NDJSON steps straight through, 100 s timeout), `/api/intel/report`, `/api/intel/rank`, `/api/intel/live`. Code: `src/lib/server/agentsi.ts`.
 - **Limits and caching.** Per-IP limits (6 scans a minute, 2 forced rescans; per server instance) and short in-memory caches for detect, report, rank and live. Scans are never cached by Elyperp; Agent SI may return its own recent result, which the page labels "Agent SI cached result".
@@ -74,6 +76,7 @@ Read-only token checks powered by [Agent SI](https://agentsi.site) (built by PAN
 - **What's shown.** Agent SI's own SI Score, tier, confidence and deductions (no Elyperp score), every finding with its evidence and source, a controls table (owner, proxy, mint, pause, blacklist, limits, taxes, authorities), holders, liquidity and Agent SI's scan history. Each value shows where it was read and when. Missing data is shown as missing, never as a pass.
 - **History.** Scans are saved in the browser (`elyperp:intel:history:v1`, 40 entries). Opening a token again compares it with the previous real scan: score, liquidity, owner, controls, top-10 holders and findings.
 - **Links.** `/intelligence?address=…&chain=…` opens the latest saved Agent SI report (labelled "Saved report"); "Open full Agent SI report" goes to `agentsi.site/scan/<chain>/<address>`.
+- **On-chain record.** Each finished scan is recorded on the `ElyperpIntelRegistry` contract on Robinhood Chain (report hash, tier, scan time) by the server's publisher key, after the response is sent. The report page shows the record and whether it matches. Off until `NEXT_PUBLIC_INTEL_REGISTRY` and `ELYPERP_PUBLISHER_KEY` are set; deploy and verify steps are in [`contracts/README.md`](contracts/README.md).
 
 ## Testing
 

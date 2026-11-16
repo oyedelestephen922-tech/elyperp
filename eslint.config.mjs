@@ -19,6 +19,7 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      "contracts/**", // separate Hardhat project with its own toolchain
     ],
   },
 ];

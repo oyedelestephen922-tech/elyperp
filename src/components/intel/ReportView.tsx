@@ -1,6 +1,6 @@
 "use client";
 import clsx from "clsx";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Badge, Button } from "@/components/ui/primitives";
 import { fmtCompact, fmtPct, shortAddr } from "@/lib/format";
 import {
@@ -8,6 +8,7 @@ import {
   type Finding, type HistoryPoint, type Rank, type Report, type Sourced,
 } from "@/lib/intel/agentsi";
 import type { Change } from "@/lib/intel/history";
+import { reportHash, type OnchainRecord } from "@/lib/intel/registry";
 
 export type Freshness = { kind: "fresh" | "cached" | "saved"; at: string };
 
@@ -231,6 +232,8 @@ export function ReportView({
           )}
         </Section>
       )}
+
+      <OnchainSection report={report} />
 
       {/* sources */}
       {!!report.sources?.length && (
@@ -476,3 +479,64 @@ function Liquidity({ report }: { report: Report }) {
     </div>
   );
 }
+
+/** The scan as recorded on the Elyperp Intelligence registry on Robinhood Chain. Hidden until the contract is configured. */
+function OnchainSection({ report }: { report: Report }) {
+  const [data, setData] = useState<OnchainRecord | null>(null);
+  const [tries, setTries] = useState(0);
+  const scannedAt = Math.floor(Date.parse(report.createdAt) / 1000);
+
+  useEffect(() => {
+    let cancelled = false;
+    const qs = new URLSearchParams({ address: report.address, chain: report.chain });
+    fetch(`/api/intel/onchain?${qs}`)
+      .then((r) => (r.ok ? (r.json() as Promise<OnchainRecord>) : null))
+      .then((d) => !cancelled && d && setData(d))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [report.address, report.chain, report.createdAt, tries]);
+
+  // A new scan is written to the chain just after it finishes; look again a few times.
+  const behind = !!data?.configured && (!data.record || data.record.scannedAt < scannedAt);
+  useEffect(() => {
+    if (!behind || tries >= 3) return;
+    const t = setTimeout(() => setTries((n) => n + 1), 20_000);
+    return () => clearTimeout(t);
+  }, [behind, tries]);
+
+  if (!data?.configured || !data.registry) return null;
+  const rec = data.record;
+  const link = `https://robinhoodchain.blockscout.com/address/${data.registry}`;
+  const matches = !!rec && rec.reportHash.toLowerCase() === reportHash(report).toLowerCase();
+
+  return (
+    <Section title="Robinhood Chain record" src="Elyperp Intelligence registry">
+      <div className="text-sm flex flex-col gap-2">
+        {!rec ? (
+          <p className="text-muted">{tries < 3 ? "Recording this scan on Robinhood Chain…" : "This token isn't recorded on Robinhood Chain yet."}</p>
+        ) : matches ? (
+          <p className="text-long">✓ This exact report is recorded on Robinhood Chain.</p>
+        ) : rec.scannedAt < scannedAt ? (
+          <p className="text-muted">{tries < 3 ? "Recording this scan on Robinhood Chain… The record below is from an earlier scan." : "The on-chain record is from an earlier scan of this token."}</p>
+        ) : rec.scannedAt > scannedAt ? (
+          <p className="text-muted">A newer scan of this token is recorded on Robinhood Chain. Refresh the scan to see it.</p>
+        ) : (
+          <p className="text-warn">The on-chain record for this scan time doesn&apos;t match this report.</p>
+        )}
+        {rec && (
+          <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <Kv k="Recorded tier" v={rec.tierName} />
+            <Kv k="Scan time" v={dt(new Date(rec.scannedAt * 1000).toISOString())} />
+            <Kv k="Written on-chain" v={dt(new Date(rec.publishedAt * 1000).toISOString())} />
+            <Kv k="Scans recorded" v={String(rec.count)} />
+          </dl>
+        )}
+        {rec && <p className="text-[11px] text-faint num break-all">Report hash {rec.reportHash}</p>}
+        <a href={link} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline w-fit">View the registry contract on Blockscout ↗</a>
+      </div>
+    </Section>
+  );
+}
+

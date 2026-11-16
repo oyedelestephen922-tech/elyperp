@@ -1,4 +1,7 @@
+import { after } from "next/server";
+import type { Report } from "@/lib/intel/agentsi";
 import { allow, cleanAddress, cleanChain, clientIp, jsonError, upstreamHeaders, upstreamUrl } from "@/lib/server/agentsi";
+import { publishingEnabled, publishScan } from "@/lib/server/registry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -56,14 +59,54 @@ export async function GET(req: Request) {
     return jsonError(status === 429 ? 429 : status >= 500 ? 502 : status, msg, { detect: body.detect ?? null });
   }
 
-  // pass the stream through untouched; stop the timer when it ends
+  // Pass the stream through untouched. While it passes, watch for the final report line
+  // so the scan can be recorded on Robinhood Chain after the response has finished.
+  const publish = publishingEnabled();
+  let settle: (r: Report | null) => void = () => {};
+  const finalReport = new Promise<Report | null>((resolve) => {
+    settle = resolve;
+    setTimeout(() => resolve(null), SCAN_TIMEOUT_MS + 5_000);
+  });
+  req.signal.addEventListener("abort", () => settle(null));
+  const decoder = new TextDecoder();
+  let pending = "";
+  let report: Report | null = null;
+  const readLine = (line: string) => {
+    if (!line.includes('"report"')) return;
+    try {
+      const o = JSON.parse(line) as { type?: string; report?: Report };
+      if (o.type === "report" && o.report) report = o.report;
+    } catch {
+      /* not a complete JSON line */
+    }
+  };
   const body = upstream.body.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        controller.enqueue(chunk);
+        if (!publish) return;
+        pending += decoder.decode(chunk, { stream: true });
+        let i: number;
+        while ((i = pending.indexOf("\n")) >= 0) {
+          readLine(pending.slice(0, i));
+          pending = pending.slice(i + 1);
+        }
+      },
       flush() {
         clearTimeout(timer);
+        if (publish) {
+          readLine(pending + decoder.decode());
+          settle(report);
+        }
       },
     }),
   );
+  if (publish) {
+    after(async () => {
+      const r = await finalReport;
+      if (r) await publishScan(r);
+    });
+  }
   return new Response(body, {
     status: 200,
     headers: {
