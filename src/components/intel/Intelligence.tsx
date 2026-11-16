@@ -96,7 +96,7 @@ export function Intelligence() {
         if (r.status === 422 && options.length > 1) {
           setPhase({ kind: "choose", address, options, message: body.error ?? "This address exists on more than one chain." });
         } else {
-          setPhase({ kind: "error", address, message: body.error ?? `Scan failed (${r.status}).`, options: options.length ? options : undefined });
+          setPhase({ kind: "error", address, message: friendly(body.error) ?? `Scan failed (${r.status}).`, options: options.length ? options : undefined });
         }
         return;
       }
@@ -485,4 +485,13 @@ function RankBoard({ onOpen }: { onOpen: (address: string, chain: string) => voi
       )}
     </div>
   );
+}
+
+/** Agent SI's API errors are written for developers; reword the ones a trader can act on. */
+function friendly(msg?: string): string | undefined {
+  if (!msg) return msg;
+  if (/no market for this address/i.test(msg)) {
+    return "Agent SI found no market for this address on any chain and no contract code on the chains it checks first. Check that you pasted the token's contract address, not a wallet or pair address.";
+  }
+  return msg.replace(/\s*Add &chain=<chain id>\.?/, "").trim();
 }
