@@ -275,7 +275,7 @@ function PhaseView({ phase, onPick, onCancel }: { phase: Phase; onPick: (chain: 
   if (phase.kind === "choose" || (phase.kind === "error" && phase.options?.length)) {
     const options = phase.kind === "choose" ? phase.options : phase.options ?? [];
     return (
-      <div className="panel p-5 flex flex-col gap-3">
+      <div role="alert" className="panel p-5 flex flex-col gap-3">
         <p className="text-sm text-fg">{phase.kind === "choose" ? phase.message : phase.message}</p>
         <div className="flex flex-wrap gap-2">
           {options.map((c) => <Button key={c} onClick={() => onPick(c)} className="!py-1.5 text-xs">{chainName(c)}</Button>)}
@@ -284,7 +284,7 @@ function PhaseView({ phase, onPick, onCancel }: { phase: Phase; onPick: (chain: 
     );
   }
   if (phase.kind === "error") {
-    return <div className="panel p-5 border-short/40 text-sm text-short">{phase.message}</div>;
+    return <div role="alert" className="panel p-5 border-short/40 text-sm text-short">{phase.message}</div>;
   }
   // scanning
   const order = Object.keys(STEP_LABELS);
