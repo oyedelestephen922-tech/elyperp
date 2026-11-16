@@ -11,6 +11,7 @@ const LINKS = [
   { href: "/markets", match: "/markets", label: "Markets" },
   { href: "/portfolio", match: "/portfolio", label: "Portfolio" },
   { href: "/history", match: "/history", label: "Trade History" },
+  { href: "/intelligence", match: "/intelligence", label: "Intelligence" },
   { href: "/docs", match: "/docs", label: "Documentation" },
 ];
 

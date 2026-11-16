@@ -15,6 +15,7 @@ export function SiteFooter() {
           <FLink href="/trade/BTC">Trade</FLink>
           <FLink href="/markets">Markets</FLink>
           <FLink href="/portfolio">Portfolio</FLink>
+          <FLink href="/intelligence">Intelligence</FLink>
           <FLink href="/docs">Documentation</FLink>
         </Col>
         <Col title="Legal">
