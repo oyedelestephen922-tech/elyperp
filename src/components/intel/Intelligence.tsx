@@ -171,11 +171,12 @@ export function Intelligence() {
   // deep link: /intelligence?address=…&chain=…
   const deepLinked = useRef(false);
   useEffect(() => {
+    // only the URL the page was opened with counts; later URL updates come from show()
     if (deepLinked.current) return;
+    deepLinked.current = true;
     const a = params.get("address");
     const c = params.get("chain");
     if (!a) return;
-    deepLinked.current = true;
     setInput(a);
     if (c) void openSaved(a, c);
     else void analyze(a);
