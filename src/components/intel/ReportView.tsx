@@ -154,6 +154,13 @@ export function ReportView({
         </div>
       </div>
 
+      {changes && changes.list.length === 0 && (
+        <Section title="Changes since your last view" src={`Compared with the scan from ${dt(changes.since)}`}>
+          <p className="text-sm text-muted">
+            No change in score, liquidity, ownership, controls, holder concentration or findings.
+          </p>
+        </Section>
+      )}
       {changes && changes.list.length > 0 && (
         <Section title="Changes since your last view" src={`Compared with the scan from ${dt(changes.since)}`}>
           <ul className="divide-y divide-line text-sm">
