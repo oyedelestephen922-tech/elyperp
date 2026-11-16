@@ -60,7 +60,7 @@ Lighter only lets a partner fee apply to accounts on the Plus or Premium tiers, 
 - **Charts.** History from `/api/v1/candles`, live bar built from the trade stream.
 - **Account.** The wallet's Lighter account comes from `/api/v1/accountsByL1Address`; the first USDG deposit (`deposit(to, 3, 0, amount)` on Lighter's contract) creates it. "Enable trading" makes an API key in the browser with Lighter's signer, the wallet signs Lighter's "Register Lighter Account" message, and the key is stored in local storage. It signs orders, cancels, leverage changes and withdrawals (which always pay out to the owner's address).
 - **Orders.** Market (IOC at a worst price from the chosen slippage), limit (GTC up to 28 days, IOC, post-only), reduce-only, TP/SL attached to an entry (grouped OTO/OTOCO), TP/SL on a position (OCO tied to the position), close and partial close, cancel.
-- **Region rules.** Lighter rejects orders from restricted regions (including the US and UK) by the caller's IP. Every transaction is sent from the user's browser, never through Elyperp's server, so Lighter sees the trader's own location.
+- **Sent from the browser.** Lighter applies its own eligibility checks by the caller's IP. Every transaction is sent from the user's browser, never through Elyperp's server, so Lighter sees the trader's own connection.
 
 API route: `/api/health`.
 

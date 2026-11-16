@@ -107,10 +107,6 @@ export function OnboardingModal({ open, onClose }: { open: boolean; onClose: () 
         {stage === "ready" && canApproveIntegrator() && !integratorFor() && <BuilderFee />}
 
         {error && <p className="text-short">{error}</p>}
-        <p className="text-faint">
-          Lighter doesn&apos;t accept orders from restricted regions, including the United States and the United Kingdom.
-          Market data works everywhere.
-        </p>
       </ol>
     </Modal>
   );

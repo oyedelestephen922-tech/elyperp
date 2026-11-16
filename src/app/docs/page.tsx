@@ -40,7 +40,6 @@ export default function DocsPage() {
             <li><b className="text-fg">Enable trading</b>: sign one message to register a trading key for this browser. From then on orders don&apos;t need a wallet pop-up.</li>
             <li>Pick a market and trade.</li>
           </ol>
-          <p>Lighter doesn&apos;t accept orders from restricted regions, including the United States and the United Kingdom. Lighter checks this itself on every order.</p>
         </S>
 
         <S id="funds" title="Deposits & withdrawals">
