@@ -8,6 +8,7 @@ import { TopNav } from "@/components/nav/TopNav";
 export const metadata: Metadata = {
   title: "Elyperp | Perps on Robinhood Chain",
   description: "Trade crypto, stock and ETF perpetuals on Robinhood Chain.",
+  twitter: { card: "summary", site: "@elyperp", creator: "@elyperp" },
 };
 
 export const viewport: Viewport = { themeColor: "#050706", width: "device-width", initialScale: 1 };
