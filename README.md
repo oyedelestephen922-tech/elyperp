@@ -64,6 +64,17 @@ Lighter only lets a partner fee apply to accounts on the Plus or Premium tiers, 
 
 API route: `/api/health`.
 
+## Intelligence (`/intelligence`)
+
+Read-only token checks powered by [Agent SI](https://agentsi.site) (built by PANTHER). No wallet, no keys, nothing signed or deployed.
+
+- **Server proxy.** Agent SI refuses calls from other sites' pages, so the browser only talks to Elyperp's own routes, which call Agent SI from the server: `/api/intel/detect`, `/api/intel/scan` (streams Agent SI's NDJSON steps straight through, 100 s timeout), `/api/intel/report`, `/api/intel/rank`, `/api/intel/live`. Code: `src/lib/server/agentsi.ts`.
+- **Limits and caching.** Per-IP limits (6 scans a minute, 2 forced rescans; per server instance) and short in-memory caches for detect, report, rank and live. Scans are never cached by Elyperp; Agent SI may return its own recent result, which the page labels "Agent SI cached result".
+- **Chain detection.** 0x addresses go through Agent SI's detect first; if several chains match, the user picks one. Other formats (Solana and the rest) go straight to the scan, which detects the chain itself.
+- **What's shown.** Agent SI's own SI Score, tier, confidence and deductions (no Elyperp score), every finding with its evidence and source, a controls table (owner, proxy, mint, pause, blacklist, limits, taxes, authorities), holders, liquidity and Agent SI's scan history. Each value shows where it was read and when. Missing data is shown as missing, never as a pass.
+- **History.** Scans are saved in the browser (`elyperp:intel:history:v1`, 40 entries). Opening a token again compares it with the previous real scan: score, liquidity, owner, controls, top-10 holders and findings.
+- **Links.** `/intelligence?address=…&chain=…` opens the latest saved Agent SI report (labelled "Saved report"); "Open full Agent SI report" goes to `agentsi.site/scan/<chain>/<address>`.
+
 ## Testing
 
 - `npm test`: market parsing, categories, integer scaling, order building (market/limit/TIF/TP/SL), positions and formatting against trimmed real API responses, plus the WASM signer run in Node (field-for-field match with lighter-python's native signer).
