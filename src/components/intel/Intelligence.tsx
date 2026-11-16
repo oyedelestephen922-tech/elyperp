@@ -229,7 +229,7 @@ export function Intelligence() {
               autoComplete="off"
               className="num flex-1 rounded-md border border-line-2 bg-panel px-4 py-3.5 text-sm outline-none focus:border-accent/70 focus:shadow-[0_0_0_3px_rgba(24,217,139,0.15)]"
             />
-            <Button variant="accent" className="px-6 py-3.5 font-semibold tracking-wide" disabled={busy || !input.trim()}>
+            <Button type="submit" variant="accent" className="px-6 py-3.5 font-semibold tracking-wide" disabled={busy || !input.trim()}>
               {busy ? <Spinner /> : "ANALYZE CONTRACT"}
             </Button>
           </form>
