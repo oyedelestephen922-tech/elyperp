@@ -104,3 +104,16 @@ describe("streaming", () => {
     expect((out[2] as { cached: boolean }).cached).toBe(false);
   });
 });
+
+describe("clipText", () => {
+  it("shortens spam-length token names and leaves normal ones alone", async () => {
+    const { clipText } = await import("../src/lib/intel/agentsi");
+    expect(clipText("AGSI", 14)).toBe("AGSI");
+    const spam = "BTCETHUSDTBNBUSDCXRPSOLTRXHYPEDOGE".repeat(10);
+    const out = clipText(spam, 14);
+    expect(out.length).toBe(14);
+    expect(out.endsWith("…")).toBe(true);
+    expect(clipText(null, 10)).toBe("");
+    expect(clipText("  a   b ", 10)).toBe("a b");
+  });
+});

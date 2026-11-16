@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { Badge, Button } from "@/components/ui/primitives";
 import { fmtCompact, fmtPct, shortAddr } from "@/lib/format";
 import {
-  SEVERITY_ORDER, agentsiReportUrl, chainName, evidenceKind, isFlag, isMissing, severityTone, sourceOf, tierInfo, yesNo,
+  SEVERITY_ORDER, agentsiReportUrl, chainName, clipText, evidenceKind, isFlag, isMissing, severityTone, sourceOf, tierInfo, yesNo,
   type Finding, type HistoryPoint, type Rank, type Report, type Sourced,
 } from "@/lib/intel/agentsi";
 import type { Change } from "@/lib/intel/history";
@@ -55,14 +55,14 @@ export function ReportView({
   };
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 min-w-0 [overflow-wrap:anywhere]">
       {/* token header */}
       <div className="panel p-4 md:p-5 flex flex-col gap-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-xl md:text-2xl font-semibold tracking-tight">{report.token?.name ?? "Unnamed token"}</h2>
-              {report.token?.symbol && <Badge>{report.token.symbol}</Badge>}
+              <h2 className="text-xl md:text-2xl font-semibold tracking-tight [overflow-wrap:anywhere]" title={report.token?.name ?? undefined}>{clipText(report.token?.name, 60) || "Unnamed token"}</h2>
+              {report.token?.symbol && <span title={report.token.symbol}><Badge>{clipText(report.token.symbol, 16)}</Badge></span>}
               <Badge tone="accent">{chainName(report.chain)}</Badge>
             </div>
             <div className="mt-1 flex items-center gap-2 text-xs text-muted">

@@ -247,3 +247,14 @@ export async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenera
 export function yesNo(v: boolean | null | undefined): "yes" | "no" | "unknown" {
   return v === true ? "yes" : v === false ? "no" : "unknown";
 }
+
+/**
+ * Token names and symbols come straight from the chain and can be anything,
+ * including spam tokens whose "symbol" is hundreds of tickers glued together.
+ * Shorten them for display; show the full text in a tooltip.
+ */
+export function clipText(s: string | null | undefined, max: number): string {
+  if (!s) return "";
+  const t = s.trim().replace(/\s+/g, " ");
+  return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+}

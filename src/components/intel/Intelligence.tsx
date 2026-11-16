@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Badge, Button, Empty, Spinner, Tabs } from "@/components/ui/primitives";
 import { fmtCompact, shortAddr } from "@/lib/format";
 import {
-  chainName, isEvm, looksLikeAddress, readNdjson, tierInfo,
+  chainName, clipText, isEvm, looksLikeAddress, readNdjson, tierInfo,
   type DetectResponse, type HistoryPoint, type LiveEvent, type Rank, type RankRow, type Report, type ReportLine, type ReportResponse, type StepLine,
 } from "@/lib/intel/agentsi";
 import { compare, latestPerToken, snapshotOf, useIntelHistory, type Change } from "@/lib/intel/history";
@@ -187,7 +187,7 @@ export function Intelligence() {
   const share = async () => {
     if (!shown) return;
     const url = `${window.location.origin}/intelligence?address=${encodeURIComponent(shown.report.address)}&chain=${encodeURIComponent(shown.report.chain)}`;
-    const text = `${shown.report.token?.symbol ?? shortAddr(shown.report.address)} on ${chainName(shown.report.chain)}: SI Score ${shown.report.score?.points ?? "?"} ${shown.report.score?.label ?? ""} (Agent SI via Elyperp)`;
+    const text = `${clipText(shown.report.token?.symbol, 14) || shortAddr(shown.report.address)} on ${chainName(shown.report.chain)}: SI Score ${shown.report.score?.points ?? "?"} ${shown.report.score?.label ?? ""} (Agent SI via Elyperp)`;
     try {
       if (navigator.share) {
         await navigator.share({ title: "Elyperp Intelligence", text, url });
@@ -238,7 +238,7 @@ export function Intelligence() {
         </div>
       </section>
 
-      <div className="max-w-6xl w-full mx-auto px-4 md:px-8 py-8 grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="max-w-6xl w-full mx-auto px-4 md:px-8 py-8 grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex flex-col gap-4 min-w-0" ref={reportRef}>
           <PhaseView phase={phase} onPick={(c) => phase.kind === "choose" || phase.kind === "error" ? scan(phase.address!, c) : undefined} onCancel={() => { abortRef.current?.abort(); setPhase({ kind: "idle" }); }} />
           {shown && phase.kind !== "scanning" && (
@@ -339,7 +339,7 @@ function HistoryPanel({ onOpen }: { onOpen: (address: string, chain: string) => 
                 <button onClick={() => onOpen(s.address, s.chain)} className="w-full text-left px-4 py-2.5 hover:bg-panel-2 flex items-center gap-3">
                   <span className="num text-lg w-9 text-right" style={{ color: t.color }}>{s.points ?? "--"}</span>
                   <span className="flex-1 min-w-0">
-                    <span className="block text-sm truncate">{s.symbol ?? shortAddr(s.address)} <span className="text-faint text-xs">· {chainName(s.chain)}</span></span>
+                    <span className="block text-sm truncate">{clipText(s.symbol, 14) || shortAddr(s.address)} <span className="text-faint text-xs">· {chainName(s.chain)}</span></span>
                     <span className="block text-[11px] text-faint">{new Date(s.createdAt).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}{count > 1 ? ` · ${count} scans saved` : ""}</span>
                   </span>
                   <span role="button" tabIndex={0} aria-label="Remove" onClick={(e) => { e.stopPropagation(); remove(s.address, s.chain); }}
@@ -409,11 +409,11 @@ function LiveFeed({ onOpen }: { onOpen: (address: string, chain: string) => void
               <button disabled={!e.subject} onClick={() => e.subject && onOpen(e.subject.address, e.subject.chain)} className="w-full text-left px-4 py-2.5 hover:bg-panel-2">
                 <div className="flex items-center gap-2 text-[11px]">
                   <Badge tone={e.type === "analysis" ? "accent" : e.type === "liquidity-change" ? "warn" : "default"}>{e.type.replace("-", " ")}</Badge>
-                  {e.subject && <span className="text-fg">{e.subject.symbol ?? shortAddr(e.subject.address)}</span>}
-                  {e.subject && <span className="text-faint">{chainName(e.subject.chain)}</span>}
-                  <span className="ml-auto text-faint">{timeAgo(e.at)}</span>
+                  {e.subject && <span className="text-fg truncate min-w-0" title={e.subject.symbol ?? undefined}>{clipText(e.subject.symbol, 14) || shortAddr(e.subject.address)}</span>}
+                  {e.subject && <span className="text-faint shrink-0">{chainName(e.subject.chain)}</span>}
+                  <span className="ml-auto text-faint shrink-0">{timeAgo(e.at)}</span>
                 </div>
-                <p className="text-xs text-muted mt-1 leading-relaxed">{e.summary}</p>
+                <p className="text-xs text-muted mt-1 leading-relaxed [overflow-wrap:anywhere] line-clamp-3">{e.summary}</p>
                 {e.source && <p className="text-[10px] text-faint mt-0.5 truncate">Source: {e.source}</p>}
               </button>
             </li>
@@ -466,16 +466,16 @@ function RankBoard({ onOpen }: { onOpen: (address: string, chain: string) => voi
       ) : !data.rows.length ? (
         <Empty>No ranked tokens on this chain yet.</Empty>
       ) : (
-        <table className="w-full text-sm">
-          <thead><tr className="text-[11px] text-faint text-left"><th className="px-4 py-2 font-normal w-10">#</th><th className="py-2 font-normal">Token</th><th className="py-2 font-normal text-right">Liquidity</th><th className="py-2 font-normal text-right pr-4">SI Score</th></tr></thead>
+        <table className="w-full text-sm table-fixed">
+          <thead><tr className="text-[11px] text-faint text-left"><th className="px-4 py-2 font-normal w-10">#</th><th className="py-2 font-normal">Token</th><th className="py-2 font-normal text-right w-20 hidden sm:table-cell">Liquidity</th><th className="py-2 font-normal text-right pr-4 w-28">SI Score</th></tr></thead>
           <tbody>
             {data.rows.map((r, i) => {
               const t = tierInfo(r.tier);
               return (
                 <tr key={r.address} onClick={() => onOpen(r.address, r.chain)} className="border-t border-line hover:bg-panel-2 cursor-pointer">
                   <td className="px-4 py-2 text-faint num">{i + 1}</td>
-                  <td className="py-2"><span className="text-fg">{r.symbol ?? shortAddr(r.address)}</span> <span className="text-faint text-xs">{r.name}</span></td>
-                  <td className="py-2 num text-right text-muted">{r.liquidityUsd != null ? fmtCompact(r.liquidityUsd) : "--"}</td>
+                  <td className="py-2 pr-2 truncate" title={[r.symbol, r.name].filter(Boolean).join(" · ")}><span className="text-fg">{clipText(r.symbol, 14) || shortAddr(r.address)}</span> <span className="text-faint text-xs">{clipText(r.name, 40)}</span></td>
+                  <td className="py-2 num text-right text-muted hidden sm:table-cell">{r.liquidityUsd != null ? fmtCompact(r.liquidityUsd) : "--"}</td>
                   <td className="py-2 pr-4 text-right"><span className="num" style={{ color: t.color }}>{r.points}</span> <span className="text-[10px] tracking-wider" style={{ color: t.color }}>{r.label ?? t.label}</span></td>
                 </tr>
               );
